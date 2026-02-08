@@ -1,0 +1,231 @@
+// This is your Prisma schema file,
+// learn more about it in the docs: https://pris.ly/d/prisma-schema
+
+// Looking for ways to speed up your queries, or scale easily with your serverless or edge functions?
+// Try Prisma Accelerate: https://pris.ly/cli/accelerate-init
+
+generator client {
+  provider = "prisma-client"
+  output   = "../generated/prisma"
+}
+
+datasource db {
+  provider = "postgresql"
+}
+
+model Parent {
+  id        Int @id @default(autoincrement())
+  name      String
+  relation  Relation
+  phone1    String
+  phone2    String?
+  village   String
+
+  userId    Int @unique
+  user      User @relation(fields: [userId], references: [id])
+
+  students  Student[]
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Student {
+  id            Int @id @default(autoincrement())
+  admissionId   Int @unique
+  name          String
+  classId       Int
+  class         Class @relation(fields: [classId], references: [id])
+  gender        String
+  dob           DateTime
+  busId         Int?
+  bus           Bus? @relation(fields: [busId], references: [id])
+  parentId      Int
+  parent        Parent @relation(fields: [parentId], references: [id])
+  feeDetails    Fee[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([parentId])
+  @@index([classId])
+}
+
+model Class {
+  id            Int @id @default(autoincrement())
+  name          String
+  section       String
+  students      Student[]
+  timetable     TimeTable[]
+  teacherId     Int?
+  teacher       Teacher? @relation(fields: [teacherId], references: [id])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+  @@unique([name, section])
+}
+
+model Teacher {
+  id        Int @id @default(autoincrement())
+  name      String
+  phone     String
+  salary    Float?
+
+  userId    Int @unique
+  user      User @relation(fields: [userId], references: [id])
+
+  classes   Class[]
+  timetable TimeTable[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+
+model User {
+  id        Int @id @default(autoincrement())
+  email     String @unique
+  role      Role
+
+  otp       String?
+  otpExpiry DateTime?
+
+  parent    Parent?
+  teacher   Teacher?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
+model Mark {
+  id              Int @id @default(autoincrement())
+  examId          Int
+  marks           Float
+  studentId       Int
+  student         Student @relation(fields: [studentId], references: [id])
+  exam            Exam @relation(fields: [examId], references: [id])
+
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([studentId])
+  @@index([examId])
+  @@unique([examId, studentId])
+
+
+}
+
+model Exam {
+  id              Int @id @default(autoincrement())
+  name            String
+  totalMarks      Float
+  subject         String
+  examDate        DateTime
+  classId         Int
+  marks           Mark[]
+  class           Class @relation(fields: [classId], references: [id])
+
+  @@index([classId])
+}
+
+model TimeTable {
+  id            Int @id @default(autoincrement())
+  classId       Int
+  class         Class @relation(fields: [classId], references: [id])
+  teacherId     Int
+  teacher       Teacher @relation(fields: [teacherId], references: [id])
+  subject       String
+  day           String
+  period        Int
+
+  @@index([classId])
+  @@index([teacherId])
+}
+
+model Bus {
+  id            Int @id @default(autoincrement())
+  driverName    String
+  phone         String
+  route         String[]
+  students      Student[]
+}
+
+model Fee {
+  id            Int @id @default(autoincrement())
+
+  studentId     Int
+  student       Student @relation(fields: [studentId], references: [id])
+
+  type          FeeType
+  total         Float
+  academicYear  String
+  payments      Payment[]
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([studentId])
+  @@index([type])
+  @@unique([studentId, type, academicYear])
+}
+
+model Payment {
+  id            Int @id @default(autoincrement())
+  feeId         Int
+  fee           Fee @relation(fields: [feeId], references: [id])
+
+  amount        Float
+  method        PaymentMethod
+  status        PaymentStatus
+  screenshot    String?
+
+  verifiedById Int?
+  verifiedBy    User? @relation(fields: [verifiedById], references: [id])
+  verifiedAt    DateTime?
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+  @@index([feeId])
+  @@index([status])
+  @@index([verifiedById])
+}
+
+model Feedback {
+  id            Int @id @default(autoincrement())
+  title         String
+  message       String
+  userId        Int
+  user          User @relation(fields: [userId], references: [id])
+  createdAt     DateTime @default(now())
+  updatedAt     DateTime @updatedAt
+
+
+  @@index([userId])
+}
+
+enum PaymentMethod {
+  ONLINE
+  CASH
+}
+
+enum PaymentStatus {
+  PENDING
+  SUCCESS
+  REJECTED
+}
+
+enum FeeType {
+  TUITION
+  BUS
+  EXAM
+  OTHER
+}
+
+enum Relation {
+  Father
+  Mother
+  Guardian
+}
+
+enum Role {
+  PRINCIPAL
+  RECEPTIONIST
+  TEACHER
+  PARENT
+}
