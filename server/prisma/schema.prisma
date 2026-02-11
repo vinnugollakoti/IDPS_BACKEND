@@ -32,6 +32,7 @@ model Parent {
 model Student {
   id            Int @id @default(autoincrement())
   admissionId   Int @unique
+  photo         String?
   name          String
   classId       Int
   class         Class @relation(fields: [classId], references: [id])
@@ -44,6 +45,10 @@ model Student {
   feeDetails    Fee[]
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  marks Mark[]
+  attendances Attendance[]
+
 
   @@index([parentId])
   @@index([classId])
@@ -59,6 +64,11 @@ model Class {
   teacher       Teacher? @relation(fields: [teacherId], references: [id])
   createdAt     DateTime @default(now())
   updatedAt     DateTime @updatedAt
+
+  attendanceSessions AttendanceSession[]
+  exams Exam[]
+
+
   @@unique([name, section])
 }
 
@@ -73,6 +83,8 @@ model Teacher {
 
   classes   Class[]
   timetable TimeTable[]
+  attendanceTaken AttendanceSession[]
+
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -89,6 +101,10 @@ model User {
 
   parent    Parent?
   teacher   Teacher?
+  verifiedPayments Payment[]
+  feedbacks Feedback[]
+
+
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -108,9 +124,46 @@ model Mark {
   @@index([studentId])
   @@index([examId])
   @@unique([examId, studentId])
-
-
 }
+
+model AttendanceSession {
+  id            Int @id @default(autoincrement())
+
+  classId       Int
+  class         Class @relation(fields: [classId], references: [id])
+
+  date          DateTime
+
+  takenById     Int
+  takenBy       Teacher @relation(fields: [takenById], references: [id])
+
+  createdAt     DateTime @default(now())
+
+  attendances   Attendance[]
+
+  @@unique([classId, date]) // one session per class per day
+  @@index([classId])
+  @@index([takenById])
+}
+
+model Attendance {
+  id                 Int @id @default(autoincrement())
+
+  sessionId          Int
+  session            AttendanceSession @relation(fields: [sessionId], references: [id])
+
+  studentId          Int
+  student            Student @relation(fields: [studentId], references: [id])
+
+  status             AttendanceStatus
+
+  createdAt          DateTime @default(now())
+
+  @@unique([sessionId, studentId]) // no duplicate entry
+  @@index([studentId])
+}
+
+
 
 model Exam {
   id              Int @id @default(autoincrement())
@@ -209,6 +262,12 @@ enum PaymentStatus {
   SUCCESS
   REJECTED
 }
+
+enum AttendanceStatus {
+  PRESENT
+  ABSENT
+}
+
 
 enum FeeType {
   TUITION
