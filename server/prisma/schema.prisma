@@ -14,132 +14,170 @@ datasource db {
 }
 
 model Parent {
-  id        Int @id @default(autoincrement())
-  name      String
-  relation  Relation
-  phone1    String
-  phone2    String?
-  village   String
+  id       Int       @id @default(autoincrement())
+  name     String
+  relation Relation?
+  phone1   String
+  phone2   String?
+  village  String
 
-  userId    Int @unique
-  user      User @relation(fields: [userId], references: [id])
+  userId Int  @unique
+  user   User @relation(fields: [userId], references: [id])
 
-  students  Student[]
+  students ParentStudent[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
-model Student {
-  id            Int @id @default(autoincrement())
-  admissionId   Int @unique
-  photo         String?
-  name          String
-  classId       Int
-  class         Class @relation(fields: [classId], references: [id])
-  gender        String
-  dob           DateTime
-  busId         Int?
-  bus           Bus? @relation(fields: [busId], references: [id])
-  parentId      Int
-  parent        Parent @relation(fields: [parentId], references: [id])
-  feeDetails    Fee[]
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+model ParentStudent {
+  parentId  Int
+  studentId Int
 
-  marks Mark[]
+  parent  Parent  @relation(fields: [parentId], references: [id])
+  student Student @relation(fields: [studentId], references: [id])
+
+  @@id([parentId, studentId])
+}
+
+model Student {
+  id     Int      @id @default(autoincrement())
+  photo  String?
+  name   String
+  gender Gender
+  dob    DateTime
+
+  classId Int
+  class   Class @relation(fields: [classId], references: [id])
+
+  busId Int?
+  bus   Bus? @relation(fields: [busId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  parents     ParentStudent[]
+  feeDetails  Fee[]
+  marks       Mark[]
   attendances Attendance[]
 
-
-  @@index([parentId])
   @@index([classId])
 }
 
 model Class {
-  id            Int @id @default(autoincrement())
-  name          String
-  section       String
-  students      Student[]
-  timetable     TimeTable[]
-  teacherId     Int?
-  teacher       Teacher? @relation(fields: [teacherId], references: [id])
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  id      Int    @id @default(autoincrement())
+  name    Int
+  section String
 
+  teacherId Int?
+  teacher   Teacher? @relation(fields: [teacherId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  students           Student[]
+  timetable          TimeTable[]
   attendanceSessions AttendanceSession[]
-  exams Exam[]
-
+  exams              Exam[]
+  classSubjects      ClassSubject[]
 
   @@unique([name, section])
 }
 
 model Teacher {
-  id        Int @id @default(autoincrement())
-  name      String
-  phone     String
-  salary    Float?
+  id     Int      @id @default(autoincrement())
+  name   String
+  phone  String
+  gender Gender
+  salary Decimal?
 
-  userId    Int @unique
-  user      User @relation(fields: [userId], references: [id])
+  userId Int  @unique
+  user   User @relation(fields: [userId], references: [id])
 
-  classes   Class[]
-  timetable TimeTable[]
+  classes         Class[]
+  timetable       TimeTable[]
   attendanceTaken AttendanceSession[]
-
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
-
 model User {
-  id        Int @id @default(autoincrement())
-  email     String @unique
+  id        Int       @id @default(autoincrement())
+  name      String
+  email     String    @unique
   role      Role
-
+  gender    Gender
   otp       String?
   otpExpiry DateTime?
 
-  parent    Parent?
-  teacher   Teacher?
+  parent           Parent?
+  teacher          Teacher?
   verifiedPayments Payment[]
-  feedbacks Feedback[]
-
-
+  feedbacks        Feedback[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 }
 
 model Mark {
-  id              Int @id @default(autoincrement())
-  examId          Int
-  marks           Float
-  studentId       Int
-  student         Student @relation(fields: [studentId], references: [id])
-  exam            Exam @relation(fields: [examId], references: [id])
+  id        Int     @id @default(autoincrement())
+  examId    Int
+  marks     Float
+  studentId Int
+  student   Student @relation(fields: [studentId], references: [id])
+  exam      Exam    @relation(fields: [examId], references: [id])
 
-  createdAt       DateTime @default(now())
-  updatedAt       DateTime @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
+  @@unique([examId, studentId])
   @@index([studentId])
   @@index([examId])
-  @@unique([examId, studentId])
+}
+
+model ClassSubject {
+  id Int @id @default(autoincrement())
+
+  classId Int
+  class   Class @relation(fields: [classId], references: [id])
+
+  subjectId Int
+  subject   Subject @relation(fields: [subjectId], references: [id])
+
+  @@unique([classId, subjectId])
+}
+
+model Notice {
+  id        Int      @id @default(autoincrement())
+  title     String
+  message   String
+  createdAt DateTime @default(now())
+}
+
+model Homework {
+  id          Int      @id @default(autoincrement())
+  classId     Int
+  teacherId   Int
+  subject     String
+  description String
+  dueDate     DateTime
 }
 
 model AttendanceSession {
-  id            Int @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
-  classId       Int
-  class         Class @relation(fields: [classId], references: [id])
+  classId Int
+  class   Class @relation(fields: [classId], references: [id])
 
-  date          DateTime
+  date DateTime
 
-  takenById     Int
-  takenBy       Teacher @relation(fields: [takenById], references: [id])
+  takenById Int
+  takenBy   Teacher @relation(fields: [takenById], references: [id])
 
-  createdAt     DateTime @default(now())
+  createdAt DateTime @db.Date
 
-  attendances   Attendance[]
+  attendances Attendance[]
 
   @@unique([classId, date]) // one session per class per day
   @@index([classId])
@@ -147,107 +185,115 @@ model AttendanceSession {
 }
 
 model Attendance {
-  id                 Int @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
-  sessionId          Int
-  session            AttendanceSession @relation(fields: [sessionId], references: [id])
+  sessionId Int
+  session   AttendanceSession @relation(fields: [sessionId], references: [id])
 
-  studentId          Int
-  student            Student @relation(fields: [studentId], references: [id])
+  studentId Int
+  student   Student @relation(fields: [studentId], references: [id])
 
-  status             AttendanceStatus
+  status AttendanceStatus
 
-  createdAt          DateTime @default(now())
+  createdAt DateTime @default(now())
 
   @@unique([sessionId, studentId]) // no duplicate entry
   @@index([studentId])
 }
 
+model Subject {
+  id   Int    @id @default(autoincrement())
+  name String
 
+  exams         Exam[]
+  classSubjects ClassSubject[]
+}
 
 model Exam {
-  id              Int @id @default(autoincrement())
-  name            String
-  totalMarks      Float
-  subject         String
-  examDate        DateTime
-  classId         Int
-  marks           Mark[]
-  class           Class @relation(fields: [classId], references: [id])
+  id         Int      @id @default(autoincrement())
+  name       String
+  totalMarks Float
+  subjectId  Int
+  subject    Subject  @relation(fields: [subjectId], references: [id])
+  examDate   DateTime
+  classId    Int
+  marks      Mark[]
+  class      Class    @relation(fields: [classId], references: [id])
 
+  @@index([examDate])
   @@index([classId])
 }
 
 model TimeTable {
-  id            Int @id @default(autoincrement())
-  classId       Int
-  class         Class @relation(fields: [classId], references: [id])
-  teacherId     Int
-  teacher       Teacher @relation(fields: [teacherId], references: [id])
-  subject       String
-  day           String
-  period        Int
+  id        Int     @id @default(autoincrement())
+  classId   Int
+  class     Class   @relation(fields: [classId], references: [id])
+  teacherId Int
+  teacher   Teacher @relation(fields: [teacherId], references: [id])
+  subject   String
+  day       String
+  period    Int
 
   @@index([classId])
   @@index([teacherId])
 }
 
 model Bus {
-  id            Int @id @default(autoincrement())
-  driverName    String
-  phone         String
-  route         String[]
-  students      Student[]
+  id         Int       @id @default(autoincrement())
+  driverName String
+  phone      String
+  route      String[]
+  students   Student[]
 }
 
 model Fee {
-  id            Int @id @default(autoincrement())
+  id Int @id @default(autoincrement())
 
-  studentId     Int
-  student       Student @relation(fields: [studentId], references: [id])
+  studentId Int
+  student   Student @relation(fields: [studentId], references: [id])
 
-  type          FeeType
-  total         Float
-  academicYear  String
-  payments      Payment[]
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  type         FeeType
+  total        Decimal   @db.Decimal(10, 2)
+  academicYear String
+  payments     Payment[]
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
+  @@unique([studentId, type, academicYear])
   @@index([studentId])
   @@index([type])
-  @@unique([studentId, type, academicYear])
 }
 
 model Payment {
-  id            Int @id @default(autoincrement())
-  feeId         Int
-  fee           Fee @relation(fields: [feeId], references: [id])
+  id    Int @id @default(autoincrement())
+  feeId Int
+  fee   Fee @relation(fields: [feeId], references: [id])
 
-  amount        Float
-  method        PaymentMethod
-  status        PaymentStatus
-  screenshot    String?
+  amount     Decimal
+  method     PaymentMethod
+  status     PaymentStatus
+  screenshot String?
 
   verifiedById Int?
-  verifiedBy    User? @relation(fields: [verifiedById], references: [id])
-  verifiedAt    DateTime?
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
+  verifiedBy   User?     @relation(fields: [verifiedById], references: [id])
+  verifiedAt   DateTime?
+  createdAt    DateTime  @default(now())
+  updatedAt    DateTime  @updatedAt
 
+  @@index([createdAt])
   @@index([feeId])
   @@index([status])
   @@index([verifiedById])
 }
 
 model Feedback {
-  id            Int @id @default(autoincrement())
-  title         String
-  message       String
-  userId        Int
-  user          User @relation(fields: [userId], references: [id])
-  createdAt     DateTime @default(now())
-  updatedAt     DateTime @updatedAt
-
+  id        Int      @id @default(autoincrement())
+  title     String
+  message   String
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id])
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([userId])
 }
@@ -268,7 +314,6 @@ enum AttendanceStatus {
   ABSENT
 }
 
-
 enum FeeType {
   TUITION
   BUS
@@ -280,6 +325,11 @@ enum Relation {
   Father
   Mother
   Guardian
+}
+
+enum Gender {
+  MALE
+  FEMALE
 }
 
 enum Role {
