@@ -19,19 +19,20 @@ eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjQsInJvbGUiOiJQQVJFTlQiLCJpYXQ
 ---------------
 
 
-
+CREARTION
 Parent ( completed ) - user.ts
 Student ( completed ) - user.ts
 Class ( completed ) - class.ts
 Teacher ( completed ) - user.ts
 User ( completed ) - user.ts
 Mark - class.ts
-ClassSubject - class.ts
+ClassSubject - class.ts ( completed )
 Notice - global.ts
 Homework - class.ts
 AttendanceSession - class.ts
 Attendance - class.ts
-Subject - class.ts
+Subject - class.ts ( completed )
+Exam - class.ts 
 TimeTable - global.ts
 Bus - global.ts
 Fee - fee.ts

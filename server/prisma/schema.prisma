@@ -79,7 +79,7 @@ model Class {
   timetable          TimeTable[]
   attendanceSessions AttendanceSession[]
   exams              Exam[]
-  classSubjects      ClassSubject[]
+  classSubject       ClassSubject[]
 
   @@unique([name, section])
 }
@@ -134,18 +134,6 @@ model Mark {
   @@unique([examId, studentId])
   @@index([studentId])
   @@index([examId])
-}
-
-model ClassSubject {
-  id Int @id @default(autoincrement())
-
-  classId Int
-  class   Class @relation(fields: [classId], references: [id])
-
-  subjectId Int
-  subject   Subject @relation(fields: [subjectId], references: [id])
-
-  @@unique([classId, subjectId])
 }
 
 model Notice {
@@ -203,10 +191,22 @@ model Attendance {
 
 model Subject {
   id   Int    @id @default(autoincrement())
-  name String
+  name String @unique
 
-  exams         Exam[]
-  classSubjects ClassSubject[]
+  exams        Exam[]
+  classsubject ClassSubject[]
+}
+
+model ClassSubject {
+  id Int @id @default(autoincrement())
+
+  classId Int
+  class   Class @relation(fields: [classId], references: [id])
+
+  subjectId Int
+  subject   Subject @relation(fields: [subjectId], references: [id])
+
+  @@unique([classId, subjectId], name: "classId_subjectId")
 }
 
 model Exam {
