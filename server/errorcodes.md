@@ -2,6 +2,7 @@
 
 400 = unauthorized access
 500 = missing fields
+600 = exam already existed
 
 
 
@@ -25,16 +26,16 @@ Student ( completed ) - user.ts
 Class ( completed ) - class.ts
 Teacher ( completed ) - user.ts
 User ( completed ) - user.ts
-Mark - class.ts
+Mark - class.ts ( completed )
 ClassSubject - class.ts ( completed )
-Notice - global.ts
+Notice - global.ts  -> next_version : 0.0.2
 Homework - class.ts
 AttendanceSession - class.ts
 Attendance - class.ts
 Subject - class.ts ( completed )
-Exam - class.ts 
-TimeTable - global.ts
+Exam - class.ts ( completed )
+TimeTable - global.ts -> next_version : 0.0.2
 Bus - global.ts
-Fee - fee.ts
+Fee - fee.ts ( completed )
 Payment - fee.ts
 Feedback - global.ts
