@@ -171,5 +171,16 @@ router.post("/create-student", auth, async( req: AuthRequest, res: Response) => 
     }
 })
 
+router.get("/me", auth, async (req: AuthRequest, res: Response) => {
+   const user = await prisma.user.findUnique({
+      where: { id: req.user.id },
+      include: {
+        parent: true,
+        teacher: true
+      }
+   })
+
+   res.json(user)
+})
 
 export default router;
