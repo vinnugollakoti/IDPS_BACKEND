@@ -28,14 +28,39 @@ Teacher ( completed ) - user.ts
 User ( completed ) - user.ts
 Mark - class.ts ( completed )
 ClassSubject - class.ts ( completed )
+Subject - class.ts ( completed )
+Exam - class.ts ( completed )
+Fee - fee.ts ( completed )
+--------------------------
 Notice - global.ts  -> next_version : 0.0.2
 Homework - class.ts
 AttendanceSession - class.ts
 Attendance - class.ts
-Subject - class.ts ( completed )
-Exam - class.ts ( completed )
 TimeTable - global.ts -> next_version : 0.0.2
 Bus - global.ts
-Fee - fee.ts ( completed )
 Payment - fee.ts
 Feedback - global.ts
+
+
+EDIT AND UPDATE
+Parent 
+Student
+Class
+Teacher
+Mark
+ClassSubject
+Subject
+Exam
+Fee
+
+
+GET
+Parent
+Student
+Class
+Teacher
+Mark
+ClassSubject
+Subject
+Exam
+Fee
