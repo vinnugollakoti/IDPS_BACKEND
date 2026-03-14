@@ -7,7 +7,7 @@ const router = express.Router();
 router.post("/create-class", auth, async(req: AuthRequest, res: Response) => {
     try {
         if ((req.user.role) !== "PRINCIPAL" &&  req.user.role !== "RECEPTIONIST") {
-            return res.status(400).json({message : "UnAuthorized area"});
+            return res.status(400).json({message : "UnAuthorized request"});
         }
 
         const {name, section, teacherId} = req.body;
@@ -53,7 +53,7 @@ router.post("/create-class", auth, async(req: AuthRequest, res: Response) => {
 router.post("/create-subject", auth, async (req: AuthRequest, res: Response) => {
     try {
         if ((req.user.role) !== "PRINCIPAL" &&  req.user.role !== "RECEPTIONIST" && req.user.role !== "TEACHER") {
-            return res.status(400).json({message : "UnAuthorized area"});
+            return res.status(400).json({message : "UnAuthorized request"});
         }
 
         const {name, classId} = req.body;
@@ -75,14 +75,15 @@ router.post("/create-subject", auth, async (req: AuthRequest, res: Response) => 
         const existing = await prisma.classSubject.findUnique({
             where : {
                 classId_subjectId: {
-                    classId, subjectId: subject.id
+                    classId, 
+                    subjectId: subject.id
                 }
             }
-        });
+        })
 
         if (existing) {
             return res.status(400).json({
-                message: "Subject already existed and assigned to class";
+                message: "Subject already existed and assigned to class"
             })
         }
 
@@ -106,6 +107,104 @@ router.post("/create-subject", auth, async (req: AuthRequest, res: Response) => 
     }
 })
 
-// router.post("/create-exam")
+
+router.post("/create-exam", auth, async(req: AuthRequest, res: Response) => {
+
+    try {
+
+        if (req.user.role !== 'TEACHER' && req.user.role !== 'PRINCIPAL' && req.user.role !== 'RECEPTIONIST') {
+            return res.status(400).json({message : "UnAuthorized request"});
+        }
+
+        const {exam_name, totalMarks, subjectId, examDate, classId} = req.body;
+
+        if (!exam_name || !totalMarks || !subjectId || !examDate || !classId) {
+            return res.status(500).json({message : "Missing required fields"});
+        }
+
+        const existedExam = await prisma.exam.findUnique({
+            where: {
+                name_subjectId_classId: {
+                    name: exam_name,
+                    subjectId,
+                    classId
+                }
+            }
+        })
+
+        if (existedExam) {
+            return res.status(600).json({message: "Exam already existed try searching your exam."})
+        }
+
+        const result = await prisma.$transaction( async(tx) => {
+
+            const exam = tx.exam.create({
+                data: {
+                    name: exam_name,
+                    totalMarks,
+                    subjectId,
+                    examDate,
+                    classId,  
+                },
+
+                include: {
+                    subject: true,
+                    class: true
+                }
+            })
+
+            return exam;
+        })
+
+        res.json({message: "Exam created successfully", data: result})
+
+
+    } catch(err) {
+        console.log(err)
+        return res.status(400).json({message: "Error in creating the class"});
+    }
+
+})
+
+
+router.post("/create-marks", auth, async(req: AuthRequest, res: Response) => {
+    try { 
+        if (req.user.role !== "TEACHER" && req.user.role !== "PRINCIPAL" && req.user.role !== "RECEPTIONIST") {
+            return res.status(400).json({message: "Unauthorized request"})
+        }
+
+        const {examId, marks, studentId} = req.body;
+
+        if (!examId || !marks || !studentId) {
+            return res.status(500).json({message: "Missing required fields"});
+        }
+
+        const result = await prisma.mark.upsert({
+            where: {
+                examId_studentId: {
+                    examId,
+                    studentId
+                }
+            },
+            update: {
+                marks
+            },
+            create: {
+                examId,
+                marks,
+                studentId
+            }
+        })
+
+
+        res.json({message: "Marks Created/Updated successfully!", data: result })
+    } catch (err) {
+        console.log(err)
+        return res.status(400).json({message: "Error creating marks details"});
+    }
+})
+
+
+
 
 export default router;

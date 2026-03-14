@@ -120,22 +120,6 @@ model User {
   updatedAt DateTime @updatedAt
 }
 
-model Mark {
-  id        Int     @id @default(autoincrement())
-  examId    Int
-  marks     Float
-  studentId Int
-  student   Student @relation(fields: [studentId], references: [id])
-  exam      Exam    @relation(fields: [examId], references: [id])
-
-  createdAt DateTime @default(now())
-  updatedAt DateTime @updatedAt
-
-  @@unique([examId, studentId])
-  @@index([studentId])
-  @@index([examId])
-}
-
 model Notice {
   id        Int      @id @default(autoincrement())
   title     String
@@ -217,11 +201,29 @@ model Exam {
   subject    Subject  @relation(fields: [subjectId], references: [id])
   examDate   DateTime
   classId    Int
-  marks      Mark[]
   class      Class    @relation(fields: [classId], references: [id])
 
+  marks Mark[]
+
+  @@unique([name, subjectId, classId], name: "name_subjectId_classId")
   @@index([examDate])
   @@index([classId])
+}
+
+model Mark {
+  id        Int     @id @default(autoincrement())
+  examId    Int
+  marks     Float
+  studentId Int
+  student   Student @relation(fields: [studentId], references: [id])
+  exam      Exam    @relation(fields: [examId], references: [id])
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([examId, studentId])
+  @@index([studentId])
+  @@index([examId])
 }
 
 model TimeTable {
@@ -253,11 +255,13 @@ model Fee {
   student   Student @relation(fields: [studentId], references: [id])
 
   type         FeeType
-  total        Decimal   @db.Decimal(10, 2)
+  total        Decimal @db.Decimal(10, 2)
   academicYear String
-  payments     Payment[]
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+
+  payments Payment[]
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@unique([studentId, type, academicYear])
   @@index([studentId])
