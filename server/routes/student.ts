@@ -56,5 +56,44 @@ router.post("/create-fee", auth, async(req: AuthRequest, res: Response) => {
     }
 })
 
+router.post("/create-payment", auth, async(req: AuthRequest, res: Response) => {
+    try {
+        if (req.user.role !== "PRINCIPAL") {
+            return res.status(400).json({message: "Unauthorized request"})
+        }
+
+        const {feeId, amount, method, status, screenshot} = req.body;
+
+        if (!feeId || !amount || !method || !status) {
+            return res.status(400).json({ message: "Missing required fields" });
+        }
+
+        const payment = await prisma.payment.create({
+            data: {
+                feeId,
+                amount: new Prisma.Decimal(amount),
+                method,
+                status,
+                screenshot,
+                verifiedById: req.user.id,
+                verifiedAt: new Date()
+            },
+
+            include: {
+                fee: true,
+                verifiedBy: true,
+            }
+        })
+
+        res.json({message: "Successfully created payment", data: payment})
+
+    } catch(err) {
+        console.log(err)
+        return res.status(400).json({message: "Error creating payment details, Contact developer"})
+    }
+})
+
+
+
 
 export default router;
