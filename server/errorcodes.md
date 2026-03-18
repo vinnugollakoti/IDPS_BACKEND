@@ -3,6 +3,7 @@
 400 = unauthorized access
 500 = missing fields
 600 = exam already existed
+404 = not existed
 
 
 
@@ -51,8 +52,8 @@ Mark ( completed )
 ClassSubject ( not required )
 Subject ( completed )
 Exam ( completed )
-Fee
-Payment
+Fee ( completed )
+Payment ( completd )
 
 
 GET
@@ -79,3 +80,10 @@ Subject
 Exam
 Fee
 Payment
+
+
+
+
+
+Notes :
+- There should be a function to promote each class with students selection.
