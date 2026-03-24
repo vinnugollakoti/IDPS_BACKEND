@@ -190,55 +190,70 @@ router.put("/update-payment/:id", auth, async(req: AuthRequest, res: Response) =
 })
 
 
-// router.get("/get-feedetails/:id", auth, async(req: AuthRequest, res: Response) => {
-//     try {
-//         if (req.user.role !== "PRINCIPAL") {
-//             return res.status(403).json({message: "Unauthorized request"})
-//         }
+router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res: Response) => {
+    try {
+        if (req.user.role !== "PRINCIPAL") {
+            return res.status(403).json({message: "Unauthorized request"})
+        }
 
-//         const studentId = Number(req.params.id);
+        const studentId = Number(req.params.id);
 
-//         const existedStudent = await prisma.fee.findUnique({
-//             where: {id: studentId},
-//             include: {
-//                 class: true,
-//                 bus: true,
-//                 parents: {
-//                 include: {
-//                     parent: true
-//                 }
-//                 },
-//                 feeDetails: {
-//                 include: {
-//                     payments: true
-//                 }
-//                 }
-//             }
-//         })
+        const student = await prisma.student.findUnique({
+            where: {id: studentId},
+            include: {
+                class: {
+                    include: {
+                        teacher: true
+                    }
+                },
+                bus: true,
+                parents: {
+                    include: {
+                        parent: true
+                    }
+                },
+                feeDetails: {
+                    include: {
+                        payments: true
+                    }
+                },
 
-//         if (!existedStudent) {
-//             return res.status(400).json({message: "Student not existed"});
-//         }
+                marks: {
+                    include: {
+                        exam: {
+                            include: {
+                                subject: true,
+                                class: {
+                                    include: {
+                                        teacher: true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            }
+        })
 
+        if (!student) {
+            return res.status(400).json({message: "Student not existed"});
+        }
 
+        const feeSummary = student.feeDetails.map((fee) => {
+            const totalPaid = fee.payments.filter(p => p.status === "SUCCESS").reduce((sum, p) => sum + Number(p.amount), 0);
 
+            return {
+                ...fee,
+                totalPaid,
+                remaining: Number(fee.total) - totalPaid
+            }
+        });
 
-//     } catch(err) {
-
-//     }
-// })
-
-
-// const totalPaid = await prisma.payment.aggregate({
-//   where: {
-//     feeId,
-//     status: "SUCCESS" // only successful payments
-//   },
-//   _sum: {
-//     amount: true
-//   }
-// });
-
-// const paid = totalPaid._sum.amount || 0;
+        res.json({message: "Details fetched successfully", data: {...student, feeDetails: feeSummary}})
+    } catch(err) {
+        console.log(err)
+        return res.status(400).json({message: "Error fetching the details"})
+    }
+})
 
 export default router;
