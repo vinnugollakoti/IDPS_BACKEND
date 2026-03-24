@@ -319,6 +319,4 @@ router.put("/update-teacher/:id", auth, async(req: AuthRequest, res: Response) =
     }
 })
 
-
-
 export default router;

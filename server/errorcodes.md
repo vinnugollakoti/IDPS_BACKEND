@@ -57,16 +57,16 @@ Payment ( completd )
 
 
 GET
-Parent
-Student
-Class
-Teacher
-Mark
-ClassSubject
-Subject
-Exam
-Fee
-Payment
+Parent ( completed )
+Student ( comppleted )
+Class ( completed )
+Teacher ( completed )
+Mark ( completed )
+ClassSubject ( not required )
+Subject ( completed )
+Exam ( completed )
+Fee ( completed )
+Payment ( completed )
 
 
 DELETE
