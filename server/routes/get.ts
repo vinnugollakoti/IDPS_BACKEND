@@ -134,8 +134,7 @@ router.get("/get-subjects", auth, async(req: AuthRequest, res: Response) => {
                 }
             }
         })
-
-        res.json({message: "Fetched subjects successfully"})
+        res.json({message: "Fetched subjects successfully", data: subjects})
     } catch(err) {
         console.log(err)
         return res.status(400).json({message: "Error in fetching the subject"})
