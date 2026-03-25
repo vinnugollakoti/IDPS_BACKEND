@@ -74,6 +74,7 @@ router.post("/otp-verify", async(req: Request, res: Response) => {
             }
         })
 
+
         res.json({message: "Logged in Successfully", token, user}) 
 
     } catch(err) {

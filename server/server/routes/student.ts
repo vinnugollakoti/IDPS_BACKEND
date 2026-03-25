@@ -7,7 +7,7 @@ const router = express.Router();
 router.post("/create-fee", auth, async(req: AuthRequest, res: Response) => {
 
     try {
-        if (req.user.role !== "PRINCIPAL" && req.user.role !== "RECEPTIONIST") {
+        if (req.user.role !== "PRINCIPAL") {
             return res.status(403).json({message: "Unauthorized request"})
         }
 
@@ -58,7 +58,7 @@ router.post("/create-fee", auth, async(req: AuthRequest, res: Response) => {
 
 router.post("/create-payment", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (req.user.role !== "PRINCIPAL" && req.user.role !== "RECEPTIONIST") {
+        if (req.user.role !== "PRINCIPAL") {
             return res.status(403).json({message: "Unauthorized request"})
         }
 
@@ -71,7 +71,7 @@ router.post("/create-payment", auth, async(req: AuthRequest, res: Response) => {
         const payment = await prisma.payment.create({
             data: {
                 feeId,
-                amount: Number(amount),
+                amount: new Prisma.Decimal(amount),
                 method,
                 status,
                 screenshot,
@@ -98,7 +98,7 @@ router.post("/create-payment", auth, async(req: AuthRequest, res: Response) => {
 router.put("/update-fee/:id", auth, async(req: AuthRequest, res: Response) => {
     try {
 
-        if (req.user.role !== "PRINCIPAL" && req.user.role !== "RECEPTIONIST") {
+        if (req.user.role !== "PRINCIPAL") {
             return res.status(403).json({message: "Unauthorized request"})
         }
 
@@ -149,7 +149,7 @@ router.put("/update-fee/:id", auth, async(req: AuthRequest, res: Response) => {
 router.put("/update-payment/:id", auth, async(req: AuthRequest, res: Response) => {
     try {
         
-        if (req.user.role !== "PRINCIPAL" && req.user.role !== "RECEPTIONIST") {
+        if (req.user.role !== "PRINCIPAL") {
             return res.status(403).json({message: "Unauthorized request"})
         }
 
@@ -169,7 +169,7 @@ router.put("/update-payment/:id", auth, async(req: AuthRequest, res: Response) =
             where: {id: paymentId},
             data: {
                 feeId,
-                amount:  Number(amount),
+                amount: new Prisma.Decimal(amount),
                 method,
                 status,
                 screenshot,

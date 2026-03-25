@@ -269,76 +269,54 @@ router.put("/update-student/:id", auth, async (req: AuthRequest, res: Response) 
 })
 
 
-router.put("/update-teacher/:id", auth, async (req: AuthRequest, res: Response) => {
+router.put("/update-teacher/:id", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (
-            req.user.role !== "PRINCIPAL" &&
-            req.user.role !== "RECEPTIONIST"
-        ) {
-            return res.status(400).json({ message: "UnAuthorized request" });
+        if (req.user.role !== "PRINCIPAL" && req.user.role !== "TEACHER" && req.user.role !== "RECEPTIONIST") {
+            return res.status(400).json({message: "UnAuthorized request"})
         }
 
-        const { name, email, phone, gender, salary } = req.body;
-        const teacherId = Number(req.params.id);
+        const {name, email, phone, gender, salary} = req.body;
+
+        const teacherId =  Number(req.params.id);
 
         const teacher = await prisma.teacher.findUnique({
-            where: { id: teacherId },
-            include: { user: true }
-        });
+            where: {id: teacherId}
+        })
 
         if (!teacher) {
-            return res.status(400).json({ message: "Teacher not found" });
+            return res.status(400).json({message: "Teacher not found"});
         }
 
         const result = await prisma.$transaction(async (tx) => {
-            if (email) {
-                const existingUser = await tx.user.findUnique({
-                    where: { email }
-                });
 
-                if (existingUser && existingUser.id !== teacher.userId) {
-                    throw new Error("Email already in use");
-                }
-            }
-
-            if (email || name) {
+            if(email || name) {
                 await tx.user.update({
-                    where: { id: teacher.userId },
+                    where: {id: teacher.id},
                     data: {
-                        ...(email && { email }),
-                        ...(name && { name })
+                        email,
+                        name
                     }
-                });
+                })
             }
 
-            const updatedTeacher = await tx.teacher.update({
-                where: { id: teacherId },
+            const updatedTeacher = tx.teacher.update({
+                where: {id: teacherId},
                 data: {
-                    ...(name && { name }),
-                    ...(phone && { phone }),
-                    ...(gender && { gender }),
-                    ...(salary && { salary })
+                    name,
+                    email,
+                    gender,
+                    salary
                 }
-            });
-
+            })
             return updatedTeacher;
-        });
+        })
 
-        return res.json({
-            message: "Teacher details updated successfully",
-            data: result
-        });
+        res.json({message: "Teacher details updated successfully", data: result})
 
-    } catch (err: any) {
-        console.log(err);
-
-        if (err.message === "Email already in use") {
-            return res.status(400).json({ message: err.message });
-        }
-
-        return res.status(400).json({
-            message: "Failed to update teacher details"
-        });
+    } catch (err) {
+        console.log(err)
+        return res.status(400).json({message: "Failed to update teacher details, Contact developer"});
     }
-});
+})
+
 export default router;
