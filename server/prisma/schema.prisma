@@ -14,12 +14,14 @@ datasource db {
 }
 
 model Parent {
-  id       Int       @id @default(autoincrement())
-  name     String
-  relation Relation?
-  phone1   String
-  phone2   String?
-  village  String
+  id            Int            @id @default(autoincrement())
+  name          String
+  relation      Relation?
+  type          ParentType     @default(GUARDIAN)
+  phone1        String
+  phone2        String?
+  qualification Qualification?
+  adharnumber   String?
 
   userId Int  @unique
   user   User @relation(fields: [userId], references: [id])
@@ -41,14 +43,23 @@ model ParentStudent {
 }
 
 model Student {
-  id     Int      @id @default(autoincrement())
-  photo  String?
-  name   String
-  gender Gender
-  dob    DateTime
-
-  classId Int
-  class   Class @relation(fields: [classId], references: [id])
+  id             Int             @id @default(autoincrement())
+  photo          String?
+  admissionno    String          @default("TEMP")
+  name           String
+  gender         Gender
+  dob            DateTime?
+  adharnumber    String?
+  pincode        String?
+  mothertongue   MotherTongue?
+  socialcategory SocialCategory?
+  bloodgroup     BloodGroup?
+  admissiondate  DateTime?
+  height         Int?
+  weight         Int?
+  address        String?
+  classId        Int
+  class          Class           @relation(fields: [classId], references: [id])
 
   busId Int?
   bus   Bus? @relation(fields: [busId], references: [id])
@@ -66,7 +77,7 @@ model Student {
 
 model Class {
   id      Int    @id @default(autoincrement())
-  name    Int
+  name    String
   section String
 
   teacherId Int?
@@ -282,8 +293,8 @@ model Payment {
   verifiedBy   User?     @relation(fields: [verifiedById], references: [id])
   verifiedAt   DateTime?
 
-  createdAt    DateTime  @default(now())
-  updatedAt    DateTime  @updatedAt
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
 
   @@index([createdAt])
   @@index([feeId])
@@ -332,6 +343,12 @@ enum Relation {
   Guardian
 }
 
+enum ParentType {
+  MOTHER
+  FATHER
+  GUARDIAN
+}
+
 enum Gender {
   MALE
   FEMALE
@@ -342,4 +359,64 @@ enum Role {
   RECEPTIONIST
   TEACHER
   PARENT
+}
+
+enum MotherTongue {
+  TELUGU
+  URGU
+  ENGLISH
+}
+
+enum BloodGroup {
+  A_POS
+  A_NEG
+  B_POS
+  B_NEG
+  AB_POS
+  AB_NEG
+  O_POS
+  O_NEG
+}
+
+enum SocialCategory {
+  OC
+  BC_A
+  BC_B
+  BC_C
+  BC_D
+  BC_E
+  MBC_DNC
+  SC
+  ST
+}
+
+enum Qualification {
+  NO_FORMAL_EDUCATION
+  PRIMARY
+  MIDDLE_SCHOOL
+  SECONDARY
+  HIGHER_SECONDARY
+
+  DIPLOMA
+  ITI
+
+  BSC
+  BCOM
+  BA
+  BTECH
+  BE
+  BBA
+  BCA
+  BDS
+  MBBS
+
+  MSC
+  MCOM
+  MA
+  MTECH
+  MBA
+  MCA
+
+  PHD
+  OTHER
 }
