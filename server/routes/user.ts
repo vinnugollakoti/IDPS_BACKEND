@@ -3,13 +3,25 @@ import prisma from "../prisma/client";
 import { AuthRequest, auth } from "../middleware/auth";
 const router = express.Router();
 
+const resolveAuthUserId = (user: any) => {
+    const value = Number(user?.userId ?? user?.id);
+    return Number.isFinite(value) && value > 0 ? value : null;
+};
+
+const resolveParentType = (relation?: string | null) => {
+    const value = String(relation ?? "").toUpperCase();
+    if (value === "MOTHER") return "MOTHER";
+    if (value === "FATHER") return "FATHER";
+    return "GUARDIAN";
+};
+
 router.post("/create-parent", auth, async(req: AuthRequest, res: Response) => {
     try {
         if ((req.user.role) !== "PRINCIPAL" &&  req.user.role !== "RECEPTIONIST") {
             return res.status(400).json({message : "UnAuthorized request"});
         }
 
-        const {email, gender, name, relation, phone1, phone2, village} = req.body;
+        const {email, gender, name, relation, phone1, phone2, type} = req.body;
 
         if (!email || !name || !gender || !phone1) {
             return res.status(500).json({message: "Missing required fields"});
@@ -41,7 +53,6 @@ router.post("/create-parent", auth, async(req: AuthRequest, res: Response) => {
                     relation,
                     phone1,
                     phone2,
-                    village,
                     userId: user.id
                 }
             });
@@ -172,8 +183,13 @@ router.post("/create-student", auth, async( req: AuthRequest, res: Response) => 
 })
 
 router.get("/me", auth, async (req: AuthRequest, res: Response) => {
+   const authUserId = resolveAuthUserId(req.user);
+   if (!authUserId) {
+      return res.status(401).json({ message: "Invalid token payload" });
+   }
+
    const user = await prisma.user.findUnique({
-      where: { id: req.user.id },
+      where: { id: authUserId },
       include: {
         parent: true,
         teacher: true
@@ -192,7 +208,7 @@ router.put("/update-parent/:id", auth, async(req: AuthRequest, res: Response) =>
 
         const parentId = Number(req.params.id);
 
-        const {name, email, gender, relation, phone1, phone2, village} = req.body;
+        const {name, email, gender, relation, phone1, phone2, type} = req.body;
 
         const parent = await prisma.parent.findUnique({
             where: {id: parentId}
@@ -217,7 +233,6 @@ router.put("/update-parent/:id", auth, async(req: AuthRequest, res: Response) =>
                     relation,
                     phone1,
                     phone2,
-                    village
                 }
             })
 

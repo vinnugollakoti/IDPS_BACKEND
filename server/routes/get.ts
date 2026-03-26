@@ -3,6 +3,11 @@ import prisma from "../prisma/client";
 import { AuthRequest, auth } from "../middleware/auth";
 const router = express.Router();
 
+const resolveAuthUserId = (user: any) => {
+    const value = Number(user?.userId ?? user?.id);
+    return Number.isFinite(value) && value > 0 ? value : null;
+};
+
 
 router.get("/get-exams", auth, async(req: AuthRequest, res: Response) => {
     try {
@@ -15,10 +20,12 @@ router.get("/get-exams", auth, async(req: AuthRequest, res: Response) => {
             return res.status(400).json({message : "UnAuthorized request"});
         }
 
+        const authUserId = resolveAuthUserId(req.user);
+
         let classIds: number[] | null = null;
         if (req.user.role === "TEACHER") {
             const teacher = await prisma.teacher.findUnique({
-                where: { userId: req.user.id },
+                where: { userId: authUserId ?? -1 },
                 select: { id: true }
             });
             if (!teacher) return res.json({message: "Fetched Exams", data: []});
@@ -28,8 +35,9 @@ router.get("/get-exams", auth, async(req: AuthRequest, res: Response) => {
             });
             classIds = teacherClasses.map((c) => c.id);
         } else if (req.user.role === "PARENT") {
-            const parent = await prisma.parent.findUnique({
-                where: { userId: req.user.id },
+            if (!authUserId) return res.json({message: "Fetched Exams", data: []});
+            const parent = await prisma.parent.findFirst({
+                where: { userId: authUserId },
                 select: { id: true }
             });
             if (!parent) return res.json({message: "Fetched Exams", data: []});
@@ -79,17 +87,20 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
             return res.status(400).json({message : "UnAuthorized request"});
         }
 
+        const authUserId = resolveAuthUserId(req.user);
+
         let where: { id?: { in: number[] }; teacherId?: number } = {};
         if (req.user.role === "TEACHER") {
             const teacher = await prisma.teacher.findUnique({
-                where: { userId: req.user.id },
+                where: { userId: authUserId ?? -1 },
                 select: { id: true }
             });
             if (!teacher) return res.json({message: "Fetched classess successfully", data: []});
             where = { teacherId: teacher.id };
         } else if (req.user.role === "PARENT") {
-            const parent = await prisma.parent.findUnique({
-                where: { userId: req.user.id },
+            if (!authUserId) return res.json({message: "Fetched classess successfully", data: []});
+            const parent = await prisma.parent.findFirst({
+                where: { userId: authUserId },
                 select: { id: true }
             });
             if (!parent) return res.json({message: "Fetched classess successfully", data: []});
@@ -114,7 +125,22 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
                 students: {
                     select: {
                         id: true,
-                        name: true
+                        name: true,
+                        admissionno: true,
+                        parents: {
+                            include: {
+                                parent: {
+                                    select: {
+                                        id: true,
+                                        name: true,
+                                        relation: true,
+                                        type: true,
+                                        phone1: true,
+                                        phone2: true,
+                                    }
+                                }
+                            }
+                        }
                     }
                 },
                 timetable: {
@@ -196,6 +222,8 @@ router.get("/get-marks", auth, async(req: AuthRequest, res: Response) => {
             return res.status(400).json({message : "UnAuthorized request"});
         }
 
+        const authUserId = resolveAuthUserId(req.user);
+
         let where: {
             exam?: { classId?: { in: number[] } };
             student?: { parents?: { some?: { parentId?: number } } };
@@ -203,7 +231,7 @@ router.get("/get-marks", auth, async(req: AuthRequest, res: Response) => {
 
         if (req.user.role === "TEACHER") {
             const teacher = await prisma.teacher.findUnique({
-                where: { userId: req.user.id },
+                where: { userId: authUserId ?? -1 },
                 select: { id: true }
             });
             if (!teacher) return res.json({message: "Fetched marks successfully", data: []});
@@ -214,8 +242,9 @@ router.get("/get-marks", auth, async(req: AuthRequest, res: Response) => {
             const classIds = teacherClasses.map((c) => c.id);
             where = { exam: { classId: { in: classIds } } };
         } else if (req.user.role === "PARENT") {
-            const parent = await prisma.parent.findUnique({
-                where: { userId: req.user.id },
+            if (!authUserId) return res.json({message: "Fetched marks successfully", data: []});
+            const parent = await prisma.parent.findFirst({
+                where: { userId: authUserId },
                 select: { id: true }
             });
             if (!parent) return res.json({message: "Fetched marks successfully", data: []});
@@ -249,10 +278,12 @@ router.get("/get-subjects", auth, async (req: AuthRequest, res: Response) => {
             return res.status(400).json({ message: "UnAuthorized request" });
         }
 
+        const authUserId = resolveAuthUserId(req.user);
+
         let classIds: number[] | null = null;
         if (req.user.role === "TEACHER") {
             const teacher = await prisma.teacher.findUnique({
-                where: { userId: req.user.id },
+                where: { userId: authUserId ?? -1 },
                 select: { id: true }
             });
             if (!teacher) return res.json({message: "Fetched subjects successfully", data: []});
@@ -262,8 +293,9 @@ router.get("/get-subjects", auth, async (req: AuthRequest, res: Response) => {
             });
             classIds = teacherClasses.map((c) => c.id);
         } else if (req.user.role === "PARENT") {
-            const parent = await prisma.parent.findUnique({
-                where: { userId: req.user.id },
+            if (!authUserId) return res.json({message: "Fetched subjects successfully", data: []});
+            const parent = await prisma.parent.findFirst({
+                where: { userId: authUserId },
                 select: { id: true }
             });
             if (!parent) return res.json({message: "Fetched subjects successfully", data: []});
@@ -324,6 +356,8 @@ router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
             return res.status(400).json({message : "UnAuthorized request"});
         }
 
+        const authUserId = resolveAuthUserId(req.user);
+
         let where: {
             student?: {
                 class?: { teacherId?: number };
@@ -333,7 +367,7 @@ router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
 
         if (req.user.role === "TEACHER") {
             const teacher = await prisma.teacher.findUnique({
-                where: { userId: req.user.id },
+                where: { userId: authUserId ?? -1 },
                 select: { id: true }
             });
             if (!teacher) return res.json({message: "Fetched fees successfully", data: []});
@@ -345,8 +379,9 @@ router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
                 }
             };
         } else if (req.user.role === "PARENT") {
-            const parent = await prisma.parent.findUnique({
-                where: { userId: req.user.id },
+            if (!authUserId) return res.json({message: "Fetched fees successfully", data: []});
+            const parent = await prisma.parent.findFirst({
+                where: { userId: authUserId },
                 select: { id: true }
             });
             if (!parent) return res.json({message: "Fetched fees successfully", data: []});
