@@ -127,6 +127,17 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
                         id: true,
                         name: true,
                         admissionno: true,
+                        gender: true,
+                        dob: true,
+                        adharnumber: true,
+                        pincode: true,
+                        mothertongue: true,
+                        socialcategory: true,
+                        bloodgroup: true,
+                        admissiondate: true,
+                        height: true,
+                        weight: true,
+                        address: true,
                         parents: {
                             include: {
                                 parent: {
@@ -137,6 +148,14 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
                                         type: true,
                                         phone1: true,
                                         phone2: true,
+                                        adharnumber: true,
+                                        qualification: true,
+                                        user: {
+                                            select: {
+                                                email: true,
+                                                gender: true,
+                                            }
+                                        }
                                     }
                                 }
                             }
