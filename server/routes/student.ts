@@ -883,11 +883,44 @@ router.put("/update-payment/:id", auth, async(req: AuthRequest, res: Response) =
 
 router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (req.user.role !== "PRINCIPAL") {
+        if (req.user.role !== "PRINCIPAL" && req.user.role !== "PARENT") {
             return res.status(403).json({message: "Unauthorized request"})
         }
 
         const studentId = Number(req.params.id);
+        if (!Number.isFinite(studentId) || studentId <= 0) {
+            return res.status(400).json({message: "Invalid student id"});
+        }
+
+        if (req.user.role === "PARENT") {
+            const authUserId = resolveAuthUserId(req.user);
+            if (!authUserId) {
+                return res.status(401).json({ message: "Invalid token payload" });
+            }
+
+            const parent = await prisma.parent.findFirst({
+                where: { userId: authUserId },
+                select: { id: true }
+            });
+
+            if (!parent) {
+                return res.status(403).json({message: "Unauthorized request"});
+            }
+
+            const linked = await prisma.parentStudent.findUnique({
+                where: {
+                    parentId_studentId: {
+                        parentId: parent.id,
+                        studentId
+                    }
+                },
+                select: { studentId: true }
+            });
+
+            if (!linked) {
+                return res.status(403).json({message: "Unauthorized request"});
+            }
+        }
 
         const student = await prisma.student.findUnique({
             where: {id: studentId},
