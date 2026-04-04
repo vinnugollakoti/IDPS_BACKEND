@@ -23,5 +23,5 @@ app.use("/get", GetRouter);
 
 
 app.listen(process.env.PORT, () => {
-    console.log("Your server is running 🏃‍♂️");
+    console.log("Your server is running 🏃‍♂️", process.env.PORT);
 })
