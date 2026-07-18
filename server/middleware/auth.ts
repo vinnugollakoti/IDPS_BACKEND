@@ -3,7 +3,7 @@ import { verifyToken } from "./jwt";
 
 export interface AuthRequest extends Request<any, any, any, any> {
   headers: any;
-  body: { photo: any; name: any; gender: any; dob: any; classId: any; busId: any; parentIds: any; };
+  body: any;
   user?: any;
 }
 

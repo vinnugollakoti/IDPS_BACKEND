@@ -108,9 +108,41 @@ model Teacher {
   classes         Class[]
   timetable       TimeTable[]
   attendanceTaken AttendanceSession[]
+  attendances     TeacherAttendance[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model TeacherAttendance {
+  id Int @id @default(autoincrement())
+
+  teacherId Int
+  teacher   Teacher @relation(fields: [teacherId], references: [id])
+
+  attendanceDate DateTime @db.Date
+  capturedAt     DateTime
+  submittedAt    DateTime @default(now())
+
+  selfieUrl       String
+  selfiePath      String
+  selfieMimeType  String
+  selfieSizeBytes Int
+
+  latitude  Float?
+  longitude Float?
+  accuracy  Float?
+  deviceId  String?
+
+  ipAddress String?
+  userAgent String?
+
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([teacherId, attendanceDate])
+  @@index([attendanceDate])
+  @@index([teacherId])
 }
 
 model User {

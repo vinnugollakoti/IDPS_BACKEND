@@ -6,3 +6,4 @@ node_modules
 
 
 errorcodes.md
+.env.example

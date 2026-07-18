@@ -27,7 +27,7 @@ http://localhost:<PORT>
 | `/auth` | `server/routes/auth.ts` | Active |
 | `/class` | `server/routes/class.ts` | Active |
 | `/student` | `server/routes/student.ts` | Active |
-| `/teacher` | `server/routes/teacher.ts` | Mounted but no APIs currently defined |
+| `/teacher` | `server/routes/teacher.ts` | Active |
 | `/get` | `server/routes/get.ts` | Active |
 
 ## Authentication
@@ -1353,6 +1353,231 @@ Errors:
 
 ---
 
+# Teacher Attendance APIs
+
+These routes are mounted at `/teacher`.
+
+## Supabase Environment Variables
+
+Teacher attendance selfie upload uses Supabase Storage directly.
+
+```text
+SUPABASE_URL=https://<project-ref>.supabase.co
+SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
+SUPABASE_TEACHER_ATTENDANCE_BUCKET=teacher-attendance
+TEACHER_ATTENDANCE_MAX_IMAGE_BYTES=5242880
+```
+
+Notes:
+
+- `SUPABASE_TEACHER_ATTENDANCE_BUCKET` defaults to `teacher-attendance`.
+- `TEACHER_ATTENDANCE_MAX_IMAGE_BYTES` defaults to `5MB`.
+- The bucket must exist in Supabase Storage.
+- `selfieUrl` is saved as a public object URL. If the bucket is private, use `selfiePath` to create signed URLs from Supabase.
+
+## POST `/teacher/attendance`
+
+Submits today's attendance for the authenticated teacher by uploading a live selfie to Supabase Storage and saving the attendance metadata in the database.
+
+Auth: required
+
+Allowed roles: `TEACHER`
+
+Headers:
+
+```http
+Authorization: Bearer <teacher_jwt_token>
+Content-Type: application/json
+```
+
+Body:
+
+```json
+{
+  "imageBase64": "data:image/jpeg;base64,/9j/4AAQSkZJRgABAQ...",
+  "capturedAt": "2026-07-18T08:45:00.000Z",
+  "latitude": 17.385,
+  "longitude": 78.4867,
+  "accuracy": 18.5,
+  "deviceId": "teacher-phone-123"
+}
+```
+
+Alternative raw base64 body:
+
+```json
+{
+  "imageBase64": "/9j/4AAQSkZJRgABAQ...",
+  "imageMimeType": "image/jpeg"
+}
+```
+
+Required:
+
+| Field | Type | Notes |
+|---|---|---|
+| `imageBase64` | string | Data URL or raw base64 image |
+
+Required only for raw base64:
+
+| Field | Type | Notes |
+|---|---|---|
+| `imageMimeType` | `image/jpeg`, `image/png`, `image/webp` | Not needed when `imageBase64` is a data URL |
+
+Optional:
+
+| Field | Type | Notes |
+|---|---|---|
+| `capturedAt` | Date string | Defaults to server time. Cannot be more than 5 minutes in the future |
+| `latitude` | number/string | Must be between `-90` and `90` |
+| `longitude` | number/string | Must be between `-180` and `180` |
+| `accuracy` | number/string | Must be `0` or higher |
+| `deviceId` | string | Trimmed and capped to 120 characters |
+
+Validation:
+
+- Only `JPEG`, `PNG`, and `WEBP` images are accepted.
+- Image size must be within `TEACHER_ATTENDANCE_MAX_IMAGE_BYTES`.
+- Image bytes must match the declared image type.
+- A teacher can submit only one attendance record per attendance date.
+
+Success response:
+
+```json
+{
+  "message": "Teacher attendance submitted successfully",
+  "data": {
+    "id": 1,
+    "teacherId": 1,
+    "attendanceDate": "2026-07-18T00:00:00.000Z",
+    "capturedAt": "2026-07-18T08:45:00.000Z",
+    "submittedAt": "2026-07-18T08:45:05.000Z",
+    "selfieUrl": "https://<project-ref>.supabase.co/storage/v1/object/public/teacher-attendance/teachers/1/2026-07-18/...",
+    "selfiePath": "teachers/1/2026-07-18/....jpg",
+    "selfieMimeType": "image/jpeg",
+    "selfieSizeBytes": 245000,
+    "latitude": 17.385,
+    "longitude": 78.4867,
+    "accuracy": 18.5,
+    "deviceId": "teacher-phone-123",
+    "ipAddress": "127.0.0.1",
+    "userAgent": "Mobile App",
+    "teacher": {
+      "user": {
+        "id": 1,
+        "name": "Teacher Name",
+        "email": "teacher@example.com",
+        "role": "TEACHER"
+      }
+    }
+  }
+}
+```
+
+Errors:
+
+| Status | Message |
+|---|---|
+| `401` | `Invalid token payload` |
+| `403` | `Only teachers can use teacher attendance` |
+| `404` | `Teacher profile not found` |
+| `409` | `Teacher attendance already submitted for today` |
+| `400` | Validation error message |
+| `500` | `Supabase storage is not configured` |
+
+## GET `/teacher/attendance/today`
+
+Returns whether the authenticated teacher has submitted attendance today.
+
+Auth: required
+
+Allowed roles: `TEACHER`
+
+Success response:
+
+```json
+{
+  "message": "Fetched teacher attendance status",
+  "data": {
+    "submitted": true,
+    "attendance": {
+      "id": 1,
+      "teacherId": 1,
+      "attendanceDate": "2026-07-18T00:00:00.000Z",
+      "selfieUrl": "https://..."
+    }
+  }
+}
+```
+
+Errors:
+
+| Status | Message |
+|---|---|
+| `401` | `Invalid token payload` |
+| `403` | `Only teachers can use teacher attendance` |
+| `404` | `Teacher profile not found` |
+| `400` | `Failed to fetch teacher attendance status` |
+
+## GET `/teacher/attendance`
+
+Fetches teacher attendance records. Teachers can only see their own records. Principal/receptionist can see all records or filter by `teacherId`.
+
+Auth: required
+
+Allowed roles: `TEACHER`, `PRINCIPAL`, `RECEPTIONIST`
+
+Query params:
+
+| Param | Type | Notes |
+|---|---|---|
+| `teacherId` | number | Ignored for teacher users; usable by principal/receptionist |
+| `from` | Date string | Optional start date |
+| `to` | Date string | Optional end date |
+
+Example:
+
+```http
+GET /teacher/attendance?teacherId=1&from=2026-07-01&to=2026-07-31
+```
+
+Success response:
+
+```json
+{
+  "message": "Fetched teacher attendance records",
+  "data": [
+    {
+      "id": 1,
+      "teacherId": 1,
+      "attendanceDate": "2026-07-18T00:00:00.000Z",
+      "capturedAt": "2026-07-18T08:45:00.000Z",
+      "selfieUrl": "https://...",
+      "teacher": {
+        "user": {
+          "id": 1,
+          "name": "Teacher Name",
+          "email": "teacher@example.com",
+          "role": "TEACHER"
+        }
+      }
+    }
+  ]
+}
+```
+
+Errors:
+
+| Status | Message |
+|---|---|
+| `401` | `Invalid token payload` |
+| `403` | `Unauthorized request` |
+| `404` | `Teacher profile not found` |
+| `400` | `teacherId must be a valid number` |
+| `400` | `Failed to fetch teacher attendance records` |
+
+---
+
 # Read APIs
 
 These routes are mounted at `/get`.
@@ -1621,14 +1846,6 @@ Errors:
 
 ---
 
-# Empty Mounted Router
-
-## `/teacher`
-
-`server/routes/teacher.ts` is mounted at `/teacher`, but it currently defines no endpoints.
-
----
-
 # Data Model Summary
 
 ## User
@@ -1763,6 +1980,20 @@ Important fields:
 id, feeId, amount, method, status, screenshot, verifiedById, verifiedAt
 ```
 
+## TeacherAttendance
+
+Important fields:
+
+```text
+id, teacherId, attendanceDate, capturedAt, submittedAt, selfieUrl, selfiePath, selfieMimeType, selfieSizeBytes, latitude, longitude, accuracy, deviceId, ipAddress, userAgent
+```
+
+Constraints:
+
+```text
+unique(teacherId, attendanceDate)
+```
+
 ---
 
 # Complete Endpoint Index
@@ -1793,6 +2024,9 @@ id, feeId, amount, method, status, screenshot, verifiedById, verifiedAt
 | PUT | `/student/update-fee/:id` | Yes | `PRINCIPAL`, `RECEPTIONIST` |
 | PUT | `/student/update-payment/:id` | Yes | `PRINCIPAL`, `RECEPTIONIST` |
 | GET | `/student/get-student-details-master/:id` | Yes | `PRINCIPAL`, `PARENT` |
+| POST | `/teacher/attendance` | Yes | `TEACHER` |
+| GET | `/teacher/attendance/today` | Yes | `TEACHER` |
+| GET | `/teacher/attendance` | Yes | `TEACHER`, `PRINCIPAL`, `RECEPTIONIST` |
 | GET | `/get/get-exams` | Yes | `PRINCIPAL`, `RECEPTIONIST`, `TEACHER`, `PARENT` |
 | GET | `/get/get-classes` | Yes | `PRINCIPAL`, `RECEPTIONIST`, `TEACHER`, `PARENT` |
 | GET | `/get/get-teachers` | Yes | `PRINCIPAL`, `RECEPTIONIST` |
@@ -1800,4 +2034,3 @@ id, feeId, amount, method, status, screenshot, verifiedById, verifiedAt
 | GET | `/get/get-marks` | Yes | `PRINCIPAL`, `RECEPTIONIST`, `TEACHER`, `PARENT` |
 | GET | `/get/get-subjects` | Yes | `PRINCIPAL`, `RECEPTIONIST`, `TEACHER`, `PARENT` |
 | GET | `/get/get-fees` | Yes | `PRINCIPAL`, `RECEPTIONIST`, `TEACHER`, `PARENT` |
-
