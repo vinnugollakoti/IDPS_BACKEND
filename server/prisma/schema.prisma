@@ -154,13 +154,48 @@ model User {
   otp       String?
   otpExpiry DateTime?
 
-  parent           Parent?
-  teacher          Teacher?
-  verifiedPayments Payment[]
-  feedbacks        Feedback[]
+  parent            Parent?
+  teacher           Teacher?
+  verifiedPayments  Payment[]
+  feedbacks         Feedback[]
+  pushTokens        PushToken[]
+  sentNotifications BroadcastNotification[]
+  auditLogs         AuditLog[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model PushToken {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  token     String   @unique
+  platform  String?  @default("mobile")
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([userId])
+}
+
+model BroadcastNotification {
+  id             Int                  @id @default(autoincrement())
+  title          String
+  body           String
+  imageUrl       String?
+  targetAudience NotificationAudience
+  sentById       Int
+  sentBy         User                 @relation(fields: [sentById], references: [id])
+  createdAt      DateTime             @default(now())
+
+  @@index([sentById])
+  @@index([createdAt])
+}
+
+enum NotificationAudience {
+  PARENTS
+  TEACHERS
+  BOTH
 }
 
 model Notice {
@@ -388,6 +423,8 @@ enum Gender {
 
 enum Role {
   PRINCIPAL
+  DIRECTOR
+  CHAIRMAN
   RECEPTIONIST
   TEACHER
   PARENT
@@ -452,3 +489,24 @@ enum Qualification {
   PHD
   OTHER
 }
+
+model AuditLog {
+  id             Int      @id @default(autoincrement())
+  action         String   // e.g. "CREATE_STUDENT", "UPDATE_STUDENT", "CREATE_FEE", "CREATE_PAYMENT", "DELETE_NOTICE"
+  tag            String   // Tag for easy filtering: "FEE", "STUDENT", "ATTENDANCE", "EXAM", "NOTICE", "AUTH"
+  details        String   // Human readable description
+  entityType     String?  // Target model name e.g. "Student", "Fee", "Payment"
+  entityId       String?  // Target record ID e.g. "42"
+  performedById  Int
+  performedBy    User     @relation(fields: [performedById], references: [id], onDelete: Cascade)
+  performedByRole Role    // PRINCIPAL, RECEPTIONIST, TEACHER, PARENT
+  ipAddress      String?
+  userAgent      String?
+  createdAt      DateTime @default(now())
+
+  @@index([performedById])
+  @@index([tag])
+  @@index([action])
+  @@index([createdAt])
+}
+

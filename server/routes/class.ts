@@ -1,12 +1,13 @@
 import express, {Request, Response} from "express";
 import prisma from "../prisma/client";
-import { AuthRequest, auth } from "../middleware/auth";
+import { AuthRequest, auth, isExecutiveRole, isStaffRole } from "../middleware/auth";
+import { logAudit } from "../utils/audit";
 const router = express.Router();
 
 
 router.post("/create-class", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if ((req.user.role) !== "PRINCIPAL" &&  req.user.role !== "RECEPTIONIST") {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
             return res.status(400).json({message : "UnAuthorized request"});
         }
 
@@ -41,6 +42,15 @@ router.post("/create-class", auth, async(req: AuthRequest, res: Response) => {
 
             return teacher;
         })
+
+        void logAudit({
+            req,
+            action: "CREATE_CLASS",
+            tag: "CLASS",
+            details: `Created Class ${name} ${section}`,
+            entityType: "Class",
+            entityId: result.id,
+        });
 
         res.json({message: "Class created successfully", data: result})
     } catch (err) {
@@ -133,7 +143,7 @@ router.post("/create-exam", auth, async(req: AuthRequest, res: Response) => {
         })
 
         if (existedExam) {
-            return res.status(600).json({message: "Exam already existed try searching your exam."})
+            return res.status(400).json({message: "Exam already existed try searching your exam."})
         }
 
         const result = await prisma.$transaction( async(tx) => {
@@ -397,7 +407,7 @@ router.put("/update-exam/:id", auth, async (req: AuthRequest, res: Response) => 
             return res.status(403).json({ message: "Unauthorized request" });
         }
 
-        const {name}= req.body;
+        const { name, totalMarks, subjectId, examDate, classId } = req.body;
 
         const examId = Number(req.params.id);
 

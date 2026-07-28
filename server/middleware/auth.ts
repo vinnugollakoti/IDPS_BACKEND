@@ -24,3 +24,11 @@ export function auth(req: AuthRequest, res: Response, next: NextFunction) {
     return res.status(401).json({ message: "Invalid token" });
   }
 }
+
+export function isExecutiveRole(role: string): boolean {
+  return role === "PRINCIPAL" || role === "DIRECTOR" || role === "CHAIRMAN";
+}
+
+export function isStaffRole(role: string): boolean {
+  return isExecutiveRole(role) || role === "RECEPTIONIST" || role === "TEACHER";
+}
