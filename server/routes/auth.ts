@@ -19,7 +19,7 @@ router.post("/login", async( req: Request, res: Response) => {
         })
 
         if (!user) {
-            return res.status(600).json({message: "User is not registered by the school."});
+            return res.status(404).json({message: "User is not registered by the school."});
         }
 
         const otp = Math.floor(100000 + Math.random() * 900000).toString();
@@ -35,7 +35,7 @@ router.post("/login", async( req: Request, res: Response) => {
 
         sendMOtpail(email, otp);
 
-        res.json({message: "OTP Sent, valid for 5 minutes", data : {otp, otpExpiry}})
+        res.json({ message: "OTP Sent, valid for 5 minutes" });
     } catch (err) {
         console.log(err)
         return res.status(400).json({message: "Error executing login request"});
@@ -61,7 +61,7 @@ router.post("/otp-verify", async(req: Request, res: Response) => {
             return res.status(400).json({message: "Invalid OTP"});
         }
         if (!user.otpExpiry || user.otpExpiry < new Date()) {
-            return res.json(400).json({message: "OTP expired"});
+            return res.status(400).json({message: "OTP expired"});
         }
 
         const token = generateToken(user.id, user.role);
@@ -74,7 +74,8 @@ router.post("/otp-verify", async(req: Request, res: Response) => {
             }
         })
 
-        res.json({message: "Logged in Successfully", token, user}) 
+        const { otp: _uOtp, otpExpiry: _uExp, ...safeUser } = user;
+        res.json({message: "Logged in Successfully", token, user: safeUser}) 
 
     } catch(err) {
         console.log(err)

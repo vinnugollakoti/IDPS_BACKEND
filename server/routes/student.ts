@@ -1,6 +1,7 @@
 import express, {Request, Response} from "express";
 import prisma from "../prisma/client";
-import { AuthRequest, auth } from "../middleware/auth";
+import { AuthRequest, auth, isExecutiveRole } from "../middleware/auth";
+import { logAudit } from "../utils/audit";
 const router = express.Router();
 
 const resolveAuthUserId = (user: any) => {
@@ -453,8 +454,8 @@ const importStudentRow = async (
             }
 
             const parentInputs: Array<{ relation: "Father" | "Mother" | "Guardian"; payload: ImportParentInput | null | undefined }> = [
-                { relation: "Father", payload: row.parents?.father },
-                { relation: "Mother", payload: row.parents?.mother },
+                { relation: "Father", payload: row.parents?.father as any },
+                { relation: "Mother", payload: row.parents?.mother as any },
             ];
 
             const linkedParentIds: number[] = [];
@@ -511,13 +512,13 @@ const importStudentRow = async (
                 data: {
                     admissionno: row.admissionno,
                     name: row.name,
-                    gender: row.gender,
+                    gender: (row.gender as any) || "MALE",
                     dob: row.dob ?? undefined,
                     adharnumber: row.adharnumber || undefined,
                     pincode: row.pincode || undefined,
-                    mothertongue: row.mothertongue ?? undefined,
-                    socialcategory: row.socialcategory ?? undefined,
-                    bloodgroup: row.bloodgroup ?? undefined,
+                    mothertongue: (row.mothertongue as any) ?? undefined,
+                    socialcategory: (row.socialcategory as any) ?? undefined,
+                    bloodgroup: (row.bloodgroup as any) ?? undefined,
                     admissiondate: row.admissiondate ?? undefined,
                     height: row.height ?? undefined,
                     weight: row.weight ?? undefined,
@@ -607,7 +608,7 @@ const importStudentRow = async (
 
 router.post("/bulk-import-students", auth, async (req: AuthRequest, res: Response) => {
     try {
-        if (req.user.role !== "PRINCIPAL" && req.user.role !== "RECEPTIONIST") {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
             return res.status(403).json({ message: "Unauthorized request" });
         }
 
@@ -688,7 +689,7 @@ router.post("/bulk-import-students", auth, async (req: AuthRequest, res: Respons
 router.post("/create-fee", auth, async(req: AuthRequest, res: Response) => {
 
     try {
-        if (req.user.role !== "PRINCIPAL" && req.user.role !== "RECEPTIONIST") {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
             return res.status(403).json({message: "Unauthorized request"})
         }
 
@@ -723,12 +724,25 @@ router.post("/create-fee", auth, async(req: AuthRequest, res: Response) => {
 
                 include: {
                     student: true,
-                    payments: true
+                    payments: {
+                        include: {
+                            verifiedBy: true
+                        }
+                    }
                 }
             })
 
             return fee
         })
+
+        void logAudit({
+            req,
+            action: "CREATE_FEE",
+            tag: "FEE",
+            details: `Assigned ${type} fee of ₹${total} (${academicYear}) to Student ID #${studentId}`,
+            entityType: "Fee",
+            entityId: result.id,
+        });
 
         res.json({message: "Successfully created fee for student", data: result});
     } catch (err) {
@@ -737,9 +751,78 @@ router.post("/create-fee", auth, async(req: AuthRequest, res: Response) => {
     }
 })
 
+router.post("/create-class-fee", auth, async(req: AuthRequest, res: Response) => {
+    try {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
+            return res.status(403).json({ message: "Unauthorized request" });
+        }
+
+        const { classId, type, total, academicYear } = req.body;
+
+        if (!classId || !type || !total || !academicYear) {
+            return res.status(400).json({ message: "Missing required fields" });
+        }
+
+        const students = await prisma.student.findMany({
+            where: { classId: Number(classId) }
+        });
+
+        if (students.length === 0) {
+            return res.status(404).json({ message: "No students enrolled in this class" });
+        }
+
+        let addedCount = 0;
+        let skippedCount = 0;
+
+        for (const student of students) {
+            const existed = await prisma.fee.findUnique({
+                where: {
+                    studentId_type_academicYear: {
+                        studentId: student.id,
+                        type,
+                        academicYear
+                    }
+                }
+            });
+
+            if (!existed) {
+                await prisma.fee.create({
+                    data: {
+                        studentId: student.id,
+                        type,
+                        total: Number(total),
+                        academicYear
+                    }
+                });
+                addedCount++;
+            } else {
+                skippedCount++;
+            }
+        }
+
+        void logAudit({
+            req,
+            action: "CREATE_CLASS_FEE",
+            tag: "FEE",
+            details: `Bulk created ${type} fee of ₹${total} (${academicYear}) for Class ID #${classId} (${addedCount} student(s) assigned)`,
+            entityType: "Class",
+            entityId: classId,
+        });
+
+        return res.json({
+            message: `Successfully applied ${type} fee to ${addedCount} student(s) in class. (${skippedCount} already had this fee assigned)`,
+            addedCount,
+            skippedCount
+        });
+    } catch (err) {
+        console.log(err);
+        return res.status(500).json({ message: "Error assigning fee to class, Contact developer" });
+    }
+})
+
 router.post("/create-payment", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (req.user.role !== "PRINCIPAL" && req.user.role !== "RECEPTIONIST") {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
             return res.status(403).json({message: "Unauthorized request"})
         }
 
@@ -771,6 +854,15 @@ router.post("/create-payment", auth, async(req: AuthRequest, res: Response) => {
             }
         })
 
+        void logAudit({
+            req,
+            action: "CREATE_PAYMENT",
+            tag: "FEE",
+            details: `Recorded ${method} payment of ₹${amount} for Fee ID #${feeId} (Status: ${status})`,
+            entityType: "Payment",
+            entityId: payment.id,
+        });
+
         res.json({message: "Successfully created payment", data: payment})
 
     } catch(err) {
@@ -784,7 +876,7 @@ router.post("/create-payment", auth, async(req: AuthRequest, res: Response) => {
 router.put("/update-fee/:id", auth, async(req: AuthRequest, res: Response) => {
     try {
 
-        if (req.user.role !== "PRINCIPAL" && req.user.role !== "RECEPTIONIST") {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
             return res.status(403).json({message: "Unauthorized request"})
         }
 
@@ -824,6 +916,15 @@ router.put("/update-fee/:id", auth, async(req: AuthRequest, res: Response) => {
             }
         })
 
+        void logAudit({
+            req,
+            action: "UPDATE_FEE",
+            tag: "FEE",
+            details: `Updated Fee ID #${feeId} (${type}, ₹${total}, ${academicYear})`,
+            entityType: "Fee",
+            entityId: feeId,
+        });
+
         res.json({message: "Fee detailes updated", data: {updatedFee}});
     } catch (err) {
         console.log(err);
@@ -835,7 +936,7 @@ router.put("/update-fee/:id", auth, async(req: AuthRequest, res: Response) => {
 router.put("/update-payment/:id", auth, async(req: AuthRequest, res: Response) => {
     try {
         
-        if (req.user.role !== "PRINCIPAL" && req.user.role !== "RECEPTIONIST") {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
             return res.status(403).json({message: "Unauthorized request"})
         }
 
@@ -853,7 +954,7 @@ router.put("/update-payment/:id", auth, async(req: AuthRequest, res: Response) =
         })
 
         if (!payment_) {
-            return res.status(700).json({message: "Payment data not existed, Contact developer"});
+            return res.status(404).json({message: "Payment data not existed, Contact developer"});
         }
 
         const updatedPayment = await prisma.payment.update({
@@ -873,6 +974,15 @@ router.put("/update-payment/:id", auth, async(req: AuthRequest, res: Response) =
             }
         })
 
+        void logAudit({
+            req,
+            action: "UPDATE_PAYMENT",
+            tag: "FEE",
+            details: `Updated Payment ID #${paymentId} (${method}, ₹${amount}, Status: ${status})`,
+            entityType: "Payment",
+            entityId: paymentId,
+        });
+
         res.json({message: "Payment details updated successfully", data: updatedPayment});
     } catch (err) {
         console.log(err)
@@ -883,7 +993,7 @@ router.put("/update-payment/:id", auth, async(req: AuthRequest, res: Response) =
 
 router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (req.user.role !== "PRINCIPAL" && req.user.role !== "PARENT") {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "PARENT" && req.user.role !== "TEACHER" && req.user.role !== "RECEPTIONIST") {
             return res.status(403).json({message: "Unauthorized request"})
         }
 
@@ -946,7 +1056,11 @@ router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res:
                 },
                 feeDetails: {
                     include: {
-                        payments: true
+                        payments: {
+                            include: {
+                                verifiedBy: true
+                            }
+                        }
                     }
                 },
 

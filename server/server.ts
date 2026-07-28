@@ -1,4 +1,4 @@
-import express from "express";
+import express, { Request, Response } from "express";
 import cors from "cors";
 import dotenv from "dotenv";
 import AuthRouter from "./routes/auth"
@@ -7,12 +7,184 @@ import StudentRouter from "./routes/student"
 import TeacherRouter from "./routes/teacher"
 import UserRouter from "./routes/user"
 import GetRouter from "./routes/get"
+import NotificationsRouter from "./routes/notifications"
+import prisma from "./prisma/client";
 dotenv.config();
 
 
-const app = express()
-app.use(cors())
-app.use(express.json({ limit: "8mb" }))
+const app = express();
+app.disable("etag");
+app.use((_req, res, next) => {
+    res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
+    res.setHeader("Pragma", "no-cache");
+    res.setHeader("Expires", "0");
+    next();
+});
+app.use(cors());
+app.use(express.json({ limit: "8mb" }));
+
+type ServiceHealth = {
+    status: "up" | "down" | "configured" | "not_configured";
+    message: string;
+    details?: Record<string, unknown>;
+};
+
+const maskValue = (value?: string) => {
+    if (!value) return null;
+    if (value.length <= 8) return "***";
+    return `${value.slice(0, 4)}...${value.slice(-4)}`;
+};
+
+const normalizeSupabaseUrl = () => {
+    return process.env.SUPABASE_URL?.replace(/\/rest\/v1\/?$/, "").replace(/\/+$/, "");
+};
+
+const checkDatabase = async (): Promise<ServiceHealth> => {
+    try {
+        await prisma.$queryRaw`SELECT 1`;
+        return {
+            status: "up",
+            message: "Database connection is working"
+        };
+    } catch (err) {
+        return {
+            status: "down",
+            message: "Database connection failed",
+            details: {
+                error: err instanceof Error ? err.message : "Unknown database error"
+            }
+        };
+    }
+};
+
+const checkMailService = (): ServiceHealth => {
+    const hasMailApi = Boolean(process.env.MAIL_API);
+    const hasMailId = Boolean(process.env.MAIL_ID);
+    const hasMailPassword = Boolean(process.env.MAIL_PASSWORD);
+    const configured = hasMailApi && hasMailId && hasMailPassword;
+
+    return {
+        status: configured ? "configured" : "not_configured",
+        message: configured
+            ? "Mail service configuration is set"
+            : "Mail service configuration is incomplete",
+        details: {
+            mailApiConfigured: hasMailApi,
+            mailIdConfigured: hasMailId,
+            mailPasswordConfigured: hasMailPassword,
+            mailId: maskValue(process.env.MAIL_ID)
+        }
+    };
+};
+
+const checkSupabaseStorage = async (): Promise<ServiceHealth> => {
+    const supabaseUrl = normalizeSupabaseUrl();
+    const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+    const bucket = process.env.SUPABASE_TEACHER_ATTENDANCE_BUCKET ?? "teacher-attendance";
+
+    if (!supabaseUrl || !serviceRoleKey || !bucket) {
+        return {
+            status: "not_configured",
+            message: "Supabase Storage configuration is incomplete",
+            details: {
+                supabaseUrlConfigured: Boolean(supabaseUrl),
+                serviceRoleKeyConfigured: Boolean(serviceRoleKey),
+                bucket
+            }
+        };
+    }
+
+    try {
+        const controller = new AbortController();
+        const timeout = setTimeout(() => controller.abort(), 4000);
+        const response = await fetch(`${supabaseUrl}/storage/v1/bucket/${bucket}`, {
+            method: "GET",
+            headers: {
+                Authorization: `Bearer ${serviceRoleKey}`,
+                apikey: serviceRoleKey
+            },
+            signal: controller.signal
+        });
+        clearTimeout(timeout);
+
+        if (!response.ok) {
+            const detail = await response.text().catch(() => "");
+            return {
+                status: "down",
+                message: "Supabase Storage bucket check failed",
+                details: {
+                    bucket,
+                    statusCode: response.status,
+                    error: detail || response.statusText
+                }
+            };
+        }
+
+        return {
+            status: "up",
+            message: "Supabase Storage bucket is reachable",
+            details: { bucket }
+        };
+    } catch (err) {
+        return {
+            status: "down",
+            message: "Supabase Storage check failed",
+            details: {
+                bucket,
+                error: err instanceof Error ? err.message : "Unknown Supabase Storage error"
+            }
+        };
+    }
+};
+
+const checkJwt = (): ServiceHealth => {
+    return {
+        status: process.env.JWT_SECRET ? "configured" : "not_configured",
+        message: process.env.JWT_SECRET ? "JWT secret is configured" : "JWT secret is missing"
+    };
+};
+
+app.get("/health-check", async (_req: Request, res: Response) => {
+    try {
+        const [database, supabaseStorage] = await Promise.all([
+            checkDatabase(),
+            checkSupabaseStorage()
+        ]);
+
+        const services = {
+            server: {
+                status: "up",
+                message: "Backend server is live"
+            },
+            database,
+            mail: checkMailService(),
+            supabaseStorage,
+            jwt: checkJwt()
+        };
+
+        const allHealthy = Object.values(services).every((service) => {
+            return service.status === "up" || service.status === "configured";
+        });
+
+        return res.status(allHealthy ? 200 : 503).json({
+            status: allHealthy ? "healthy" : "unhealthy",
+            message: allHealthy
+                ? "Backend server is live and required services are ready"
+                : "Backend server is live but one or more services need attention",
+            timestamp: new Date().toISOString(),
+            uptimeSeconds: Math.floor(process.uptime()),
+            environment: process.env.NODE_ENV ?? "development",
+            services
+        });
+    } catch(err) {
+        console.log(err);
+        return res.status(500).json({
+            status: "error",
+            message: "Health check failed",
+            timestamp: new Date().toISOString()
+        });
+    }
+})
 
 app.use("/", UserRouter);
 app.use("/auth", AuthRouter);
@@ -20,6 +192,7 @@ app.use("/class", ClassRouter);
 app.use("/student", StudentRouter);
 app.use("/teacher", TeacherRouter);
 app.use("/get", GetRouter);
+app.use("/notifications", NotificationsRouter);
 
 
 app.listen(process.env.PORT, () => {

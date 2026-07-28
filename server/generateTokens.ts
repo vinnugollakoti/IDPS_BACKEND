@@ -14,7 +14,7 @@ const roles = [
 roles.forEach((role, i) => {
   const token = jwt.sign(
     { userId: i + 1, role },
-    SECRET,
+    SECRET || "default_jwt_secret",
     { expiresIn: "30d" }
   );
 

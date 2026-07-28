@@ -1,6 +1,6 @@
 import express, {Request, Response} from "express";
 import prisma from "../prisma/client";
-import { AuthRequest, auth } from "../middleware/auth";
+import { AuthRequest, auth, isExecutiveRole } from "../middleware/auth";
 const router = express.Router();
 
 const resolveAuthUserId = (user: any) => {
@@ -17,7 +17,7 @@ const resolveParentType = (relation?: string | null) => {
 
 router.post("/create-parent", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if ((req.user.role) !== "PRINCIPAL" &&  req.user.role !== "RECEPTIONIST") {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
             return res.status(400).json({message : "UnAuthorized request"});
         }
 
@@ -70,10 +70,10 @@ router.post("/create-parent", auth, async(req: AuthRequest, res: Response) => {
 
 router.post("/create-teacher", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if ((req.user.role) !== "PRINCIPAL" && req.user.role !== "RECEPTIONIST") {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
             return res.status(400).json({message : "UnAuthorized area"});
         }
-        
+
         const {name, email, phone, gender} = req.body;
 
         if (!name || !email || !phone || !gender) {
@@ -121,7 +121,7 @@ router.post("/create-teacher", auth, async(req: AuthRequest, res: Response) => {
 
 router.post("/create-student", auth, async( req: AuthRequest, res: Response) => {
     try {
-        if (req.user.role !== "PRINCIPAL" && req.user.role !== "RECEPTIONIST") {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
             return res.status(400).json({message: "UnAuthorized area"});
         }
 
@@ -196,13 +196,18 @@ router.get("/me", auth, async (req: AuthRequest, res: Response) => {
       }
    })
 
-   res.json(user)
+   if (!user) {
+      return res.status(404).json({ message: "User not found" });
+   }
+
+   const { otp: _uOtp, otpExpiry: _uExp, ...safeUser } = user;
+   res.json(safeUser)
 })
 
 
 router.put("/update-parent/:id", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (req.user.role !== "PRINCIPAL" && req.user.role !== "TEACHER" && req.user.role !== "RECEPTIONIST") {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "TEACHER" && req.user.role !== "RECEPTIONIST") {
             return res.status(400).json({message: "UnAuthorized request"})
         }
 
@@ -250,7 +255,7 @@ router.put("/update-parent/:id", auth, async(req: AuthRequest, res: Response) =>
 
 router.put("/update-student/:id", auth, async (req: AuthRequest, res: Response) => {
     try {
-        if (req.user.role !== "PRINCIPAL" && req.user.role !== "TEACHER" && req.user.role !== "RECEPTIONIST") {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "TEACHER" && req.user.role !== "RECEPTIONIST") {
             return res.status(400).json({message: "UnAuthorized request"})
         }
 
@@ -287,7 +292,7 @@ router.put("/update-student/:id", auth, async (req: AuthRequest, res: Response) 
 router.put("/update-teacher/:id", auth, async (req: AuthRequest, res: Response) => {
     try {
         if (
-            req.user.role !== "PRINCIPAL" &&
+            !isExecutiveRole(req.user.role) &&
             req.user.role !== "RECEPTIONIST"
         ) {
             return res.status(400).json({ message: "UnAuthorized request" });

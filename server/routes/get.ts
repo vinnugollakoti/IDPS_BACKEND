@@ -1,6 +1,6 @@
 import express, {Request, Response} from "express";
 import prisma from "../prisma/client";
-import { AuthRequest, auth } from "../middleware/auth";
+import { AuthRequest, auth, isExecutiveRole } from "../middleware/auth";
 const router = express.Router();
 
 const resolveAuthUserId = (user: any) => {
@@ -449,5 +449,163 @@ router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
     }
 })
 
+router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
+    try {
+        if (
+            req.user.role !== "PRINCIPAL" &&
+            req.user.role !== "RECEPTIONIST" &&
+            req.user.role !== "TEACHER" &&
+            req.user.role !== "PARENT"
+        ) {
+            return res.status(400).json({ message: "UnAuthorized request" });
+        }
+
+        const authUserId = resolveAuthUserId(req.user);
+
+        let where: { classId?: { in: number[] }; id?: { in: number[] } } = {};
+
+        if (req.user.role === "TEACHER") {
+            const teacher = await prisma.teacher.findUnique({
+                where: { userId: authUserId ?? -1 },
+                select: { id: true }
+            });
+            if (!teacher) return res.json({ message: "Fetched students successfully", data: [] });
+
+            const teacherClasses = await prisma.class.findMany({
+                where: { teacherId: teacher.id },
+                select: { id: true }
+            });
+            const classIds = teacherClasses.map((c) => c.id);
+            if (classIds.length === 0) return res.json({ message: "Fetched students successfully", data: [] });
+            where = { classId: { in: classIds } };
+        } else if (req.user.role === "PARENT") {
+            if (!authUserId) return res.json({ message: "Fetched students successfully", data: [] });
+            const parent = await prisma.parent.findFirst({
+                where: { userId: authUserId },
+                select: { id: true }
+            });
+            if (!parent) return res.json({ message: "Fetched students successfully", data: [] });
+            const parentStudents = await prisma.parentStudent.findMany({
+                where: { parentId: parent.id },
+                select: { studentId: true }
+            });
+            const studentIds = parentStudents.map((p) => p.studentId);
+            if (studentIds.length === 0) return res.json({ message: "Fetched students successfully", data: [] });
+            where = { id: { in: studentIds } };
+        }
+
+        const students = await prisma.student.findMany({
+            where,
+            include: {
+                class: {
+                    include: {
+                        teacher: true
+                    }
+                },
+                parents: {
+                    include: {
+                        parent: {
+                            include: {
+                                user: {
+                                    select: {
+                                        email: true,
+                                        gender: true
+                                    }
+                                }
+                            }
+                        }
+                    }
+                }
+            },
+            orderBy: {
+                name: "asc"
+            }
+        });
+
+        return res.json({ message: "Fetched students successfully", data: students });
+    } catch (err) {
+        console.log(err);
+        return res.status(400).json({ message: "Error in fetching students" });
+    }
+});
+
+// PRINCIPAL ONLY: GET AUDIT LOGS WITH TAG & SEARCH FILTERS
+router.get("/get-audit-logs", auth, async (req: AuthRequest, res: Response) => {
+    try {
+        if (!isExecutiveRole(req.user.role)) {
+            return res.status(403).json({ message: "Unauthorized request. Only Executive leadership (Principal, Director, Chairman) can view system audit logs." });
+        }
+
+        const { tag, action, performedById, role, search, page = "1", limit = "50" } = req.query;
+
+        const pageNum = Math.max(1, parseInt(page as string, 10) || 1);
+        const limitNum = Math.min(200, Math.max(1, parseInt(limit as string, 10) || 50));
+        const skip = (pageNum - 1) * limitNum;
+
+        const whereClause: any = {};
+
+        if (tag && typeof tag === "string" && tag.trim()) {
+            whereClause.tag = tag.trim().toUpperCase();
+        }
+
+        if (action && typeof action === "string" && action.trim()) {
+            whereClause.action = action.trim().toUpperCase();
+        }
+
+        if (performedById) {
+            whereClause.performedById = Number(performedById);
+        }
+
+        if (role && typeof role === "string" && role.trim()) {
+            whereClause.performedByRole = role.trim().toUpperCase();
+        }
+
+        if (search && typeof search === "string" && search.trim()) {
+            const query = search.trim();
+            whereClause.OR = [
+                { details: { contains: query, mode: "insensitive" } },
+                { action: { contains: query, mode: "insensitive" } },
+                { performedBy: { name: { contains: query, mode: "insensitive" } } },
+            ];
+        }
+
+        const [totalCount, logs] = await Promise.all([
+            prisma.auditLog.count({ where: whereClause }),
+            prisma.auditLog.findMany({
+                where: whereClause,
+                include: {
+                    performedBy: {
+                        select: {
+                            id: true,
+                            name: true,
+                            email: true,
+                            role: true,
+                            gender: true,
+                        },
+                    },
+                },
+                orderBy: {
+                    createdAt: "desc",
+                },
+                skip,
+                take: limitNum,
+            }),
+        ]);
+
+        return res.json({
+            message: "Fetched audit logs successfully",
+            pagination: {
+                total: totalCount,
+                page: pageNum,
+                limit: limitNum,
+                totalPages: Math.ceil(totalCount / limitNum),
+            },
+            data: logs,
+        });
+    } catch (err) {
+        console.error("Error fetching audit logs:", err);
+        return res.status(500).json({ message: "Error fetching audit logs" });
+    }
+});
 
 export default router;

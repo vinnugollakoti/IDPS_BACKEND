@@ -1,11 +1,10 @@
 {
   "compilerOptions": {
-    "module": "ESNext",
-    "moduleResolution": "bundler",
-    "target": "ES2023",
+    "module": "CommonJS",
+    "moduleResolution": "node",
+    "target": "ES2022",
     "strict": true,
     "esModuleInterop": true,
-    "ignoreDeprecations": "6.0",
-    "type": "module"
+    "skipLibCheck": true
   }
 }
