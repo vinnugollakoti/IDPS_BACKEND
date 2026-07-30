@@ -1,3 +1,5 @@
+// ─── Types ───────────────────────────────────────────────────────────────────
+
 type ParsedImage = {
   buffer: Buffer;
   mimeType: string;
@@ -11,86 +13,135 @@ type UploadImageInput = {
   path: string;
 };
 
+// ─── Constants ────────────────────────────────────────────────────────────────
+
 const SUPPORTED_MIME_TYPES: Record<string, ParsedImage["extension"]> = {
   "image/jpeg": "jpg",
+  "image/jpg": "jpg",
   "image/png": "png",
   "image/webp": "webp",
+  "image/heic": "jpg",
+  "image/heif": "jpg",
 };
 
-const MAX_IMAGE_BYTES = Number(process.env.TEACHER_ATTENDANCE_MAX_IMAGE_BYTES ?? 5 * 1024 * 1024);
+const TEACHER_SELFIE_MAX_BYTES = Number(process.env.TEACHER_ATTENDANCE_MAX_IMAGE_BYTES ?? 5 * 1024 * 1024);
+const NOTIFICATION_IMAGE_MAX_BYTES = 15 * 1024 * 1024; // 15 MB
 
-const matchesImageSignature = (buffer: Buffer, mimeType: string) => {
-  if (mimeType === "image/jpeg") {
-    return buffer[0] === 0xff && buffer[1] === 0xd8 && buffer[buffer.length - 2] === 0xff && buffer[buffer.length - 1] === 0xd9;
+// ─── Helpers ──────────────────────────────────────────────────────────────────
+
+const matchesImageSignature = (buffer: Buffer, mimeType: string): boolean => {
+  if (mimeType === "image/jpeg" || mimeType === "image/jpg") {
+    // Check JPEG SOI marker
+    return buffer.length >= 2 && buffer[0] === 0xff && buffer[1] === 0xd8;
   }
-
   if (mimeType === "image/png") {
-    return buffer.subarray(0, 8).equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    return buffer.length >= 8 && buffer.subarray(0, 8).equals(
+      Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a])
+    );
   }
-
   if (mimeType === "image/webp") {
-    return buffer.subarray(0, 4).toString("ascii") === "RIFF" && buffer.subarray(8, 12).toString("ascii") === "WEBP";
+    return (
+      buffer.length >= 12 &&
+      buffer.subarray(0, 4).toString("ascii") === "RIFF" &&
+      buffer.subarray(8, 12).toString("ascii") === "WEBP"
+    );
   }
-
-  return false;
+  // HEIC/HEIF and other formats — trust the MIME type if buffer is non-empty
+  return buffer.length > 0;
 };
 
-const getSupabaseConfig = () => {
-  const url = process.env.SUPABASE_URL?.replace(/\/+$/, "");
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const bucket = process.env.SUPABASE_TEACHER_ATTENDANCE_BUCKET ?? "teacher-attendance";
-
-  if (!url || !serviceRoleKey) {
-    throw new Error("Supabase storage is not configured");
-  }
-
-  return { url, serviceRoleKey, bucket };
-};
-
-export const parseTeacherSelfie = (imageBase64?: unknown, imageMimeType?: unknown): ParsedImage => {
+/**
+ * Parse a base64 image string (with or without data URI prefix)
+ * and return buffer + metadata. Throws on invalid/unsupported input.
+ */
+const parseBase64Image = (
+  imageBase64: unknown,
+  imageMimeType: unknown,
+  maxBytes: number,
+  label: string
+): ParsedImage => {
   if (typeof imageBase64 !== "string" || !imageBase64.trim()) {
-    throw new Error("imageBase64 is required");
+    throw new Error(`${label}: imageBase64 is required`);
   }
 
-  const trimmedImage = imageBase64.trim();
-  const dataUrlMatch = trimmedImage.match(/^data:(image\/(?:jpeg|png|webp));base64,([A-Za-z0-9+/=\s]+)$/);
-  const mimeType = dataUrlMatch?.[1] ?? (typeof imageMimeType === "string" ? imageMimeType.trim().toLowerCase() : "");
-  const base64Payload = (dataUrlMatch?.[2] ?? trimmedImage).replace(/\s/g, "");
-  const extension = SUPPORTED_MIME_TYPES[mimeType];
+  const trimmed = imageBase64.trim();
 
-  if (!extension) {
-    throw new Error("Only JPEG, PNG, and WEBP selfie images are supported");
+  // Accept both:  "data:image/jpeg;base64,<payload>"  and bare base64 strings
+  const dataUrlMatch = trimmed.match(/^data:(image\/[a-zA-Z0-9+\-.]+);base64,(.+)$/s);
+
+  let mimeType: string;
+  let base64Payload: string;
+
+  if (dataUrlMatch) {
+    mimeType = dataUrlMatch[1].toLowerCase().trim();
+    base64Payload = dataUrlMatch[2].replace(/\s/g, "");
+  } else {
+    // Bare base64 — use provided mimeType hint
+    mimeType =
+      typeof imageMimeType === "string"
+        ? imageMimeType.toLowerCase().trim()
+        : "image/jpeg";
+    base64Payload = trimmed.replace(/\s/g, "");
   }
 
-  if (!/^[A-Za-z0-9+/]+={0,2}$/.test(base64Payload)) {
-    throw new Error("imageBase64 must be a valid base64 encoded image");
+  // Normalize image/jpg → image/jpeg
+  if (mimeType === "image/jpg") mimeType = "image/jpeg";
+
+  const extension: ParsedImage["extension"] = SUPPORTED_MIME_TYPES[mimeType] ?? "jpg";
+
+  // Validate base64 characters
+  if (!/^[A-Za-z0-9+/]+=*$/.test(base64Payload)) {
+    throw new Error(`${label}: imageBase64 contains invalid characters`);
   }
 
   const buffer = Buffer.from(base64Payload, "base64");
-  if (!buffer.length) {
-    throw new Error("imageBase64 must not be empty");
+
+  if (buffer.length === 0) {
+    throw new Error(`${label}: decoded image buffer is empty`);
   }
 
-  if (buffer.length > MAX_IMAGE_BYTES) {
-    throw new Error(`Selfie image must be ${Math.floor(MAX_IMAGE_BYTES / (1024 * 1024))}MB or smaller`);
+  if (buffer.length > maxBytes) {
+    throw new Error(
+      `${label}: image must be ${Math.floor(maxBytes / (1024 * 1024))} MB or smaller (received ${(buffer.length / (1024 * 1024)).toFixed(1)} MB)`
+    );
   }
 
   if (!matchesImageSignature(buffer, mimeType)) {
-    throw new Error("Selfie image content does not match the declared image type");
+    throw new Error(`${label}: image content does not match declared type "${mimeType}"`);
   }
 
   return {
     buffer,
-    mimeType,
+    mimeType: mimeType === "image/jpg" ? "image/jpeg" : mimeType,
     extension,
     sizeBytes: buffer.length,
   };
 };
 
-export const uploadTeacherAttendanceSelfie = async ({ imageBase64, imageMimeType, path }: UploadImageInput) => {
-  const config = getSupabaseConfig();
-  const parsedImage = parseTeacherSelfie(imageBase64, imageMimeType);
-  const objectPath = `${path}.${parsedImage.extension}`;
+// ─── Legacy alias (used by teacher attendance) ─────────────────────────────────
+
+export const parseTeacherSelfie = (imageBase64?: unknown, imageMimeType?: unknown): ParsedImage =>
+  parseBase64Image(imageBase64, imageMimeType, TEACHER_SELFIE_MAX_BYTES, "TeacherSelfie");
+
+// ─── Teacher Attendance Upload ────────────────────────────────────────────────
+
+const getTeacherBucketConfig = () => {
+  const url = process.env.SUPABASE_URL?.replace(/\/+$/, "");
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const bucket = process.env.SUPABASE_TEACHER_ATTENDANCE_BUCKET ?? "teacher-attendance";
+
+  if (!url || !serviceRoleKey) throw new Error("Supabase storage is not configured");
+  return { url, serviceRoleKey, bucket };
+};
+
+export const uploadTeacherAttendanceSelfie = async ({
+  imageBase64,
+  imageMimeType,
+  path,
+}: UploadImageInput) => {
+  const config = getTeacherBucketConfig();
+  const parsed = parseTeacherSelfie(imageBase64, imageMimeType);
+  const objectPath = `${path}.${parsed.extension}`;
   const uploadUrl = `${config.url}/storage/v1/object/${config.bucket}/${objectPath}`;
 
   const response = await fetch(uploadUrl, {
@@ -98,11 +149,11 @@ export const uploadTeacherAttendanceSelfie = async ({ imageBase64, imageMimeType
     headers: {
       Authorization: `Bearer ${config.serviceRoleKey}`,
       apikey: config.serviceRoleKey,
-      "Content-Type": parsedImage.mimeType,
+      "Content-Type": parsed.mimeType,
       "Cache-Control": "31536000",
       "x-upsert": "false",
     },
-    body: parsedImage.buffer as unknown as BodyInit,
+    body: parsed.buffer as unknown as BodyInit,
   });
 
   if (!response.ok) {
@@ -113,7 +164,71 @@ export const uploadTeacherAttendanceSelfie = async ({ imageBase64, imageMimeType
   return {
     selfiePath: objectPath,
     selfieUrl: `${config.url}/storage/v1/object/public/${config.bucket}/${objectPath}`,
-    selfieMimeType: parsedImage.mimeType,
-    selfieSizeBytes: parsedImage.sizeBytes,
+    selfieMimeType: parsed.mimeType,
+    selfieSizeBytes: parsed.sizeBytes,
+  };
+};
+
+// ─── Notification Image Upload ────────────────────────────────────────────────
+
+export const uploadNotificationImage = async ({
+  imageBase64,
+  imageMimeType,
+  path,
+}: UploadImageInput) => {
+  const url = process.env.SUPABASE_URL?.replace(/\/+$/, "");
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const bucket = process.env.SUPABASE_NOTIFICATION_BUCKET ?? "notification-images";
+
+  console.log(`[Supabase] uploadNotificationImage → bucket: "${bucket}"`);
+
+  if (!url || !serviceRoleKey) {
+    console.error("[Supabase] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env");
+    throw new Error("Supabase storage is not configured");
+  }
+
+  let parsed: ParsedImage;
+  try {
+    parsed = parseBase64Image(imageBase64, imageMimeType, NOTIFICATION_IMAGE_MAX_BYTES, "NotificationImage");
+  } catch (err: any) {
+    console.error("[Supabase] Image parse error:", err?.message);
+    throw err;
+  }
+
+  const objectPath = `${path}.${parsed.extension}`;
+  const uploadUrl = `${url}/storage/v1/object/${bucket}/${objectPath}`;
+
+  console.log(
+    `[Supabase] Uploading ${(parsed.sizeBytes / 1024).toFixed(1)} KB (${parsed.mimeType}) → ${uploadUrl}`
+  );
+
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${serviceRoleKey}`,
+      apikey: serviceRoleKey,
+      "Content-Type": parsed.mimeType,
+      "Cache-Control": "31536000",
+      "x-upsert": "true",
+    },
+    body: parsed.buffer as unknown as BodyInit,
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    console.error(`[Supabase] Upload failed (HTTP ${response.status}):`, detail);
+    throw new Error(
+      `Supabase upload error (HTTP ${response.status}): ${detail || response.statusText}`
+    );
+  }
+
+  const publicUrl = `${url}/storage/v1/object/public/${bucket}/${objectPath}`;
+  console.log(`[Supabase] Upload success → ${publicUrl}`);
+
+  return {
+    imagePath: objectPath,
+    imageUrl: publicUrl,
+    imageMimeType: parsed.mimeType,
+    imageSizeBytes: parsed.sizeBytes,
   };
 };

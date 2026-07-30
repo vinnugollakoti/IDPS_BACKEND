@@ -21,7 +21,8 @@ app.use((_req, res, next) => {
     next();
 });
 app.use(cors());
-app.use(express.json({ limit: "8mb" }));
+app.use(express.json({ limit: "50mb" }));
+app.use(express.urlencoded({ limit: "50mb", extended: true }));
 
 type ServiceHealth = {
     status: "up" | "down" | "configured" | "not_configured";
