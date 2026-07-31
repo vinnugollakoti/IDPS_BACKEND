@@ -1,6 +1,7 @@
 import express, {Request, Response} from "express";
 import prisma from "../prisma/client";
 import { AuthRequest, auth, isExecutiveRole } from "../middleware/auth";
+import { serverCache } from "../utils/cache";
 const router = express.Router();
 
 const resolveAuthUserId = (user: any) => {
@@ -118,6 +119,12 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
             where = { id: { in: classIds } };
         }
 
+        const cacheKey = `get-classes:${req.user.role}:${req.user.id}`;
+        const cached = serverCache.get(cacheKey);
+        if (cached) {
+            return res.json({message: "Fetched classess successfully", data: cached});
+        }
+
         const classes = await prisma.class.findMany({
             where,
             include: {
@@ -176,6 +183,7 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
             }
         })
 
+        serverCache.set(cacheKey, classes, 60);
         res.json({message: "Fetched classess successfully", data: classes})
     } catch(err) {
         console.log(err)
@@ -375,6 +383,12 @@ router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
             return res.status(400).json({message : "UnAuthorized request"});
         }
 
+        const feeCacheKey = `get-fees:${req.user.role}:${req.user.id}`;
+        const cachedFees = serverCache.get(feeCacheKey);
+        if (cachedFees) {
+            return res.json({message: "Fetched fees successfully", data: cachedFees});
+        }
+
         const authUserId = resolveAuthUserId(req.user);
 
         let where: {
@@ -442,6 +456,7 @@ router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
             }
         });
 
+        serverCache.set(feeCacheKey, fees, 60);
         return res.json({message: "Fetched fees successfully", data: fees});
     } catch(err) {
         console.log(err)
@@ -494,6 +509,12 @@ router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
             where = { id: { in: studentIds } };
         }
 
+        const studentCacheKey = `get-students:${req.user.role}:${req.user.id}`;
+        const cachedStudents = serverCache.get(studentCacheKey);
+        if (cachedStudents) {
+            return res.json({ message: "Fetched students successfully", data: cachedStudents });
+        }
+
         const students = await prisma.student.findMany({
             where,
             include: {
@@ -522,6 +543,7 @@ router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
             }
         });
 
+        serverCache.set(studentCacheKey, students, 60);
         return res.json({ message: "Fetched students successfully", data: students });
     } catch (err) {
         console.log(err);

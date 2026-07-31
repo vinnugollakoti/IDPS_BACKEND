@@ -2,6 +2,7 @@ import express, {Request, Response} from "express";
 import prisma from "../prisma/client";
 import { AuthRequest, auth, isExecutiveRole } from "../middleware/auth";
 import { logAudit } from "../utils/audit";
+import { serverCache } from "../utils/cache";
 const router = express.Router();
 
 const resolveAuthUserId = (user: any) => {
@@ -686,39 +687,37 @@ router.post("/bulk-import-students", auth, async (req: AuthRequest, res: Respons
     }
 });
 
-router.post("/create-fee", auth, async(req: AuthRequest, res: Response) => {
+function parseFeeType(rawType: any): "TUITION" | "BUS" | "EXAM" | "OTHER" {
+    if (!rawType) return "OTHER";
+    const str = String(rawType).toUpperCase().trim();
+    if (str === "TUITION" || str.includes("TUITION") || str.includes("ACADEMIC")) return "TUITION";
+    if (str === "BUS" || str.includes("BUS") || str.includes("TRANSPORT")) return "BUS";
+    if (str === "EXAM" || str.includes("EXAM") || str.includes("TEST")) return "EXAM";
+    return "OTHER";
+}
 
+router.post("/create-fee", auth, async(req: AuthRequest, res: Response) => {
     try {
         if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
-            return res.status(403).json({message: "Unauthorized request"})
+            return res.status(403).json({message: "Unauthorized request"});
         }
 
-        const {studentId, type, total, academicYear} = req.body;
+        const {studentId, type, title, total, academicYear} = req.body;
 
         if (!studentId || !type || !total || !academicYear) {
-            return res.status(500).json({message: "Missing required fields"});
+            return res.status(400).json({message: "Missing required fields"});
         }
 
-        const existedFee = await prisma.fee.findUnique({
-            where: {
-                studentId_type_academicYear: {
-                    studentId,
-                    type,
-                    academicYear
-                }
-            }
-        })
-
-        if(existedFee) {
-            return res.status(404).json({message: "Fee type already existed, you can edit the fee."})
-        }
+        const feeTitle = title || type;
+        const feeTypeEnum = parseFeeType(type);
 
         const result = await prisma.$transaction(async(tx) => {
             const fee = await tx.fee.create({
                 data: {
-                    studentId,
-                    type,
-                    total,
+                    studentId: Number(studentId),
+                    title: feeTitle,
+                    type: feeTypeEnum,
+                    total: Number(total),
                     academicYear
                 },
 
@@ -730,26 +729,27 @@ router.post("/create-fee", auth, async(req: AuthRequest, res: Response) => {
                         }
                     }
                 }
-            })
+            });
 
-            return fee
-        })
+            return fee;
+        });
 
         void logAudit({
             req,
             action: "CREATE_FEE",
             tag: "FEE",
-            details: `Assigned ${type} fee of ₹${total} (${academicYear}) to Student ID #${studentId}`,
+            details: `Created new fee bill (${feeTitle} - ₹${total}) for Student ID #${studentId}`,
             entityType: "Fee",
             entityId: result.id,
         });
 
-        res.json({message: "Successfully created fee for student", data: result});
-    } catch (err) {
-        console.log(err);
-        return res.status(403).json({message: "Error creating Fee details, Contact developer"})
+        return res.json({message: "Fee bill created successfully", data: result});
+
+    } catch (error: any) {
+        console.error("Error creating fee:", error);
+        return res.status(500).json({message: error?.message || "Error creating Fee bill"});
     }
-})
+});
 
 router.post("/create-class-fee", auth, async(req: AuthRequest, res: Response) => {
     try {
@@ -757,11 +757,14 @@ router.post("/create-class-fee", auth, async(req: AuthRequest, res: Response) =>
             return res.status(403).json({ message: "Unauthorized request" });
         }
 
-        const { classId, type, total, academicYear } = req.body;
+        const { classId, type, title, total, academicYear } = req.body;
 
         if (!classId || !type || !total || !academicYear) {
             return res.status(400).json({ message: "Missing required fields" });
         }
+
+        const feeTitle = title || type;
+        const feeTypeEnum = parseFeeType(type);
 
         const students = await prisma.student.findMany({
             where: { classId: Number(classId) }
@@ -772,32 +775,18 @@ router.post("/create-class-fee", auth, async(req: AuthRequest, res: Response) =>
         }
 
         let addedCount = 0;
-        let skippedCount = 0;
 
         for (const student of students) {
-            const existed = await prisma.fee.findUnique({
-                where: {
-                    studentId_type_academicYear: {
-                        studentId: student.id,
-                        type,
-                        academicYear
-                    }
+            await prisma.fee.create({
+                data: {
+                    studentId: student.id,
+                    title: feeTitle,
+                    type: feeTypeEnum,
+                    total: Number(total),
+                    academicYear
                 }
             });
-
-            if (!existed) {
-                await prisma.fee.create({
-                    data: {
-                        studentId: student.id,
-                        type,
-                        total: Number(total),
-                        academicYear
-                    }
-                });
-                addedCount++;
-            } else {
-                skippedCount++;
-            }
+            addedCount++;
         }
 
         void logAudit({
@@ -810,9 +799,8 @@ router.post("/create-class-fee", auth, async(req: AuthRequest, res: Response) =>
         });
 
         return res.json({
-            message: `Successfully applied ${type} fee to ${addedCount} student(s) in class. (${skippedCount} already had this fee assigned)`,
-            addedCount,
-            skippedCount
+            message: `Successfully applied ${type} fee to ${addedCount} student(s) in class.`,
+            addedCount
         });
     } catch (err) {
         console.log(err);
@@ -823,7 +811,7 @@ router.post("/create-class-fee", auth, async(req: AuthRequest, res: Response) =>
 router.post("/create-payment", auth, async(req: AuthRequest, res: Response) => {
     try {
         if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
-            return res.status(403).json({message: "Unauthorized request"})
+            return res.status(403).json({message: "Unauthorized request"});
         }
 
         const authUserId = resolveAuthUserId(req.user);
@@ -831,28 +819,57 @@ router.post("/create-payment", auth, async(req: AuthRequest, res: Response) => {
             return res.status(401).json({ message: "Invalid token payload" });
         }
 
-        const {feeId, amount, method, status, screenshot} = req.body;
+        const { feeId, feeStructureId, amount, method, status, screenshot, customReason, applyToCategory } = req.body;
+        let targetFeeId = feeId || feeStructureId;
 
-        if (!feeId || !amount || !method || !status) {
-            return res.status(403).json({ message: "Missing required fields" });
+        if (!targetFeeId && req.body.studentId) {
+            let existingFee = await prisma.fee.findFirst({
+                where: { studentId: Number(req.body.studentId) }
+            });
+            if (!existingFee) {
+                existingFee = await prisma.fee.create({
+                    data: {
+                        studentId: Number(req.body.studentId),
+                        type: "OTHER",
+                        total: Number(amount) || 0,
+                        academicYear: "2026-2027"
+                    }
+                });
+            }
+            targetFeeId = existingFee.id;
         }
+
+        if (!targetFeeId || !amount) {
+            return res.status(400).json({ message: "Missing required fields: feeId and amount are required." });
+        }
+
+        let noteParts: string[] = [];
+        if (applyToCategory) {
+            noteParts.push(`Category: ${applyToCategory}`);
+        }
+        if (customReason) {
+            noteParts.push(`Reason: ${customReason}`);
+        }
+        if (screenshot) {
+            noteParts.push(`Notes: ${screenshot}`);
+        }
+        const noteText = noteParts.length > 0 ? noteParts.join(' | ') : undefined;
 
         const payment = await prisma.payment.create({
             data: {
-                feeId,
+                feeId: Number(targetFeeId),
                 amount: Number(amount),
-                method,
-                status,
-                screenshot,
+                method: method ? method.toUpperCase() : "CASH",
+                status: status || "SUCCESS",
+                screenshot: noteText,
                 verifiedById: authUserId,
                 verifiedAt: new Date()
             },
-
             include: {
                 fee: true,
                 verifiedBy: true,
             }
-        })
+        });
 
         void logAudit({
             req,
