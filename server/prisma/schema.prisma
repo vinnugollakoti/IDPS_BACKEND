@@ -332,8 +332,9 @@ model Fee {
   studentId Int
   student   Student @relation(fields: [studentId], references: [id])
 
-  type         FeeType
-  total        Decimal @db.Decimal(10, 2)
+  title        String?
+  type         FeeType  @default(OTHER)
+  total        Decimal  @db.Decimal(10, 2)
   academicYear String
 
   payments Payment[]
@@ -341,7 +342,6 @@ model Fee {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@unique([studentId, type, academicYear])
   @@index([studentId])
   @@index([type])
 }
