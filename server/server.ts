@@ -8,6 +8,7 @@ import TeacherRouter from "./routes/teacher"
 import UserRouter from "./routes/user"
 import GetRouter from "./routes/get"
 import NotificationsRouter from "./routes/notifications"
+import PermissionRouter from "./routes/permission"
 import prisma from "./prisma/client";
 dotenv.config();
 
@@ -194,6 +195,7 @@ app.use("/student", StudentRouter);
 app.use("/teacher", TeacherRouter);
 app.use("/get", GetRouter);
 app.use("/notifications", NotificationsRouter);
+app.use("/permission", PermissionRouter);
 
 
 app.listen(process.env.PORT, () => {

@@ -162,8 +162,23 @@ model User {
   sentNotifications BroadcastNotification[]
   auditLogs         AuditLog[]
 
+  userPermissions   UserPermission[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model UserPermission {
+  id        Int      @id @default(autoincrement())
+  userId    Int
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  module    String   // e.g. "students", "fees", "circulars", "exams", "classes", "attendance", "timetable", "notifications", "permission"
+  isAllowed Boolean  @default(true)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@unique([userId, module])
+  @@index([userId])
 }
 
 model PushToken {
