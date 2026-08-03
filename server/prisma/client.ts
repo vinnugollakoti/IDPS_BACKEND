@@ -4,15 +4,18 @@ import { Pool } from "pg";
 import dotenv from "dotenv";
 dotenv.config();
 
-if (!process.env.DIRECT_URL) {
-  throw new Error("DIRECT_URL is not defined");
+const connectionString = process.env.DATABASE_URL || process.env.DIRECT_URL;
+
+if (!connectionString) {
+  throw new Error("Neither DATABASE_URL nor DIRECT_URL is defined");
 }
 
+// Optimize pool to prevent holding excessive idle connections open on Supabase
 const pool = new Pool({
-  connectionString: process.env.DIRECT_URL,
-  max: 10,
-  idleTimeoutMillis: 30000,
-  connectionTimeoutMillis: 10000,
+  connectionString,
+  max: 5,                  // Reduced connection cap to save Supabase DB RAM
+  idleTimeoutMillis: 10000, // Close idle connections after 10s
+  connectionTimeoutMillis: 5000,
   keepAlive: true,
 });
 

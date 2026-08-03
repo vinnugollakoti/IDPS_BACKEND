@@ -62,8 +62,14 @@ router.get("/get-exams", auth, async(req: AuthRequest, res: Response) => {
                 class: true,
                 marks: {
                     include: {
-                        student: true,
-                        exam: true
+                        student: {
+                            select: {
+                                id: true,
+                                name: true,
+                                admissionno: true,
+                                classId: true,
+                            }
+                        }
                     }
                 }
             }
@@ -128,7 +134,14 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
         const classes = await prisma.class.findMany({
             where,
             include: {
-                teacher: true,
+                teacher: {
+                    select: {
+                        id: true,
+                        name: true,
+                        phone: true,
+                        gender: true,
+                    }
+                },
                 students: {
                     select: {
                         id: true,
@@ -146,7 +159,7 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
                         weight: true,
                         address: true,
                         parents: {
-                            include: {
+                            select: {
                                 parent: {
                                     select: {
                                         id: true,
@@ -171,13 +184,28 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
                 },
                 timetable: {
                     include: {
-                        teacher: true
+                        teacher: {
+                            select: {
+                                id: true,
+                                name: true,
+                                phone: true,
+                            }
+                        }
                     }
                 },
                 attendanceSessions: {
+                    take: 10,
+                    orderBy: {
+                        date: "desc"
+                    },
                     include: {
                         attendances: true,
-                        takenBy: true
+                        takenBy: {
+                            select: {
+                                id: true,
+                                name: true,
+                            }
+                        }
                     }
                 }
             }
