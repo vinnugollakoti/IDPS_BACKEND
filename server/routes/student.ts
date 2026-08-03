@@ -743,6 +743,9 @@ router.post("/create-fee", auth, async(req: AuthRequest, res: Response) => {
             entityId: result.id,
         });
 
+        serverCache.invalidate("get-fees");
+        serverCache.invalidate("get-students");
+
         return res.json({message: "Fee bill created successfully", data: result});
 
     } catch (error: any) {
@@ -797,6 +800,9 @@ router.post("/create-class-fee", auth, async(req: AuthRequest, res: Response) =>
             entityType: "Class",
             entityId: classId,
         });
+
+        serverCache.invalidate("get-fees");
+        serverCache.invalidate("get-students");
 
         return res.json({
             message: `Successfully applied ${type} fee to ${addedCount} student(s) in class.`,
@@ -875,10 +881,13 @@ router.post("/create-payment", auth, async(req: AuthRequest, res: Response) => {
             req,
             action: "CREATE_PAYMENT",
             tag: "FEE",
-            details: `Recorded ${method} payment of ₹${amount} for Fee ID #${feeId} (Status: ${status})`,
+            details: `Recorded ${method} payment of ₹${amount} for Fee ID #${targetFeeId} (Status: ${status})`,
             entityType: "Payment",
             entityId: payment.id,
         });
+
+        serverCache.invalidate("get-fees");
+        serverCache.invalidate("get-students");
 
         res.json({message: "Successfully created payment", data: payment})
 

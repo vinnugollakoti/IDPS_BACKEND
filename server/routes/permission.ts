@@ -1,6 +1,7 @@
 import { Router, Response } from "express";
 import prisma from "../prisma/client";
 import { auth, AuthRequest, isExecutiveRole } from "../middleware/auth";
+import { serverCache } from "../utils/cache";
 
 const router = Router();
 
@@ -217,6 +218,10 @@ router.post("/update", auth, async (req: AuthRequest, res: Response) => {
     } catch (auditErr) {
       console.warn("Audit log creation warning:", auditErr);
     }
+
+    // Invalidate permission and classes caches for instant device synchronization
+    serverCache.invalidate("permission");
+    serverCache.invalidate("get-classes");
 
     return res.json({
       message: `Permissions updated successfully for ${targetUser.name}`,
