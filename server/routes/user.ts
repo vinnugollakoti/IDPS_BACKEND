@@ -1,6 +1,7 @@
 import express, {Request, Response} from "express";
 import prisma from "../prisma/client";
 import { AuthRequest, auth, isExecutiveRole } from "../middleware/auth";
+import { serverCache } from "../utils/cache";
 const router = express.Router();
 
 const resolveAuthUserId = (user: any) => {
@@ -21,52 +22,72 @@ router.post("/create-parent", auth, async(req: AuthRequest, res: Response) => {
             return res.status(400).json({message : "UnAuthorized request"});
         }
 
-        const {email, gender, name, relation, phone1, phone2, type} = req.body;
+        const { email, gender, name, relation, phone1, phone2, type, studentId } = req.body;
 
-        if (!email || !name || !gender || !phone1) {
-            return res.status(500).json({message: "Missing required fields"});
+        if (!name || !phone1) {
+            return res.status(400).json({message: "Missing required fields: name and phone1 are required"});
         }
 
+        const parentEmail = email && String(email).trim()
+            ? String(email).trim().toLowerCase()
+            : `parent.${phone1.replace(/\D/g, '')}.${Date.now()}@idps.local`;
+
         const existing = await prisma.user.findUnique({
-            where: {email}
+            where: { email: parentEmail }
         });
 
         if (existing) {
-            return res.status(400).json({message: "User already Existed"});
+            return res.status(400).json({message: "User already exists with this email"});
         }
-        
-        const result = await prisma.$transaction(async (tx) => {
 
+        const relValue: any = relation === 'Father' ? 'Father' : (relation === 'Mother' ? 'Mother' : 'Guardian');
+        const parentTypeVal: any = relation === 'Father' ? 'FATHER' : (relation === 'Mother' ? 'MOTHER' : 'GUARDIAN');
+        const userGender: any = gender === 'FEMALE' || relation === 'Mother' ? 'FEMALE' : 'MALE';
+
+        const result = await prisma.$transaction(async (tx) => {
             const user = await tx.user.create({
                 data: {
-                    name,
-                    email,
+                    name: name.trim(),
+                    email: parentEmail,
                     role: "PARENT",
-                    gender
+                    gender: userGender
                 }
-            })
-
+            });
 
             const parent = await tx.parent.create({
                 data: {
-                    name,
-                    relation,
-                    phone1,
-                    phone2,
+                    name: name.trim(),
+                    relation: relValue,
+                    type: parentTypeVal,
+                    phone1: String(phone1).trim(),
+                    phone2: phone2 ? String(phone2).trim() : null,
                     userId: user.id
                 }
             });
 
-            return {user, parent};
+            if (studentId) {
+                const sId = Number(studentId);
+                if (Number.isFinite(sId)) {
+                    await tx.parentStudent.create({
+                        data: {
+                            parentId: parent.id,
+                            studentId: sId
+                        }
+                    }).catch(() => {});
+                }
+            }
+
+            return { user, parent };
         });
 
-        res.json({message: "Parent created successfully", data: result} )
+        void serverCache.clear();
+        res.json({ message: "Parent created successfully", data: result });
         
-    } catch (err) {
-        console.log(err);
-        res.status(500).json({ message: "Failed to create parent" });
+    } catch (err: any) {
+        console.error("Error in /create-parent:", err);
+        res.status(500).json({ message: err?.message || "Failed to create parent" });
     }
-})
+});
 
 router.post("/create-teacher", auth, async(req: AuthRequest, res: Response) => {
     try {
@@ -119,47 +140,84 @@ router.post("/create-teacher", auth, async(req: AuthRequest, res: Response) => {
 })
 
 
+const mapMotherTongue = (value?: string | null) => {
+    if (!value) return null;
+    const text = String(value).trim().toUpperCase();
+    if (text.includes("TELUGU")) return "TELUGU";
+    if (text.includes("URDU") || text.includes("URGU")) return "URGU";
+    if (text.includes("ENGLISH")) return "ENGLISH";
+    return "TELUGU";
+};
+
+const mapBloodGroup = (value?: string | null) => {
+    if (!value) return null;
+    const text = String(value).trim().toUpperCase();
+    if (text === "A+" || text === "A_POS") return "A_POS";
+    if (text === "A-" || text === "A_NEG") return "A_NEG";
+    if (text === "B+" || text === "B_POS") return "B_POS";
+    if (text === "B-" || text === "B_NEG") return "B_NEG";
+    if (text === "AB+" || text === "AB_POS") return "AB_POS";
+    if (text === "AB-" || text === "AB_NEG") return "AB_NEG";
+    if (text === "O+" || text === "O_POS") return "O_POS";
+    if (text === "O-" || text === "O_NEG") return "O_NEG";
+    return null;
+};
+
+const mapSocialCategory = (value?: string | null) => {
+    if (!value) return null;
+    const text = String(value).trim().toUpperCase().replace(/[^A-Z0-9]/g, "");
+    if (["OC", "GENERAL"].includes(text)) return "OC";
+    if (["BCA", "BC_A"].includes(text)) return "BC_A";
+    if (["BCB", "BC_B"].includes(text)) return "BC_B";
+    if (["BCC", "BC_C"].includes(text)) return "BC_C";
+    if (["BCD", "BC_D"].includes(text)) return "BC_D";
+    if (["BCE", "BC_E"].includes(text)) return "BC_E";
+    if (["SC"].includes(text)) return "SC";
+    if (["ST"].includes(text)) return "ST";
+    return null;
+};
+
 router.post("/create-student", auth, async( req: AuthRequest, res: Response) => {
     try {
         if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
             return res.status(400).json({message: "UnAuthorized area"});
         }
 
-        const { photo, name, gender, dob, classId, busId, parentIds } = req.body;
+        const { photo, name, gender, dob, classId, busId, parentIds, admissionno, adharnumber, mothertongue, socialcategory, bloodgroup, address } = req.body;
 
-        
-
-        if (!name || !gender || !classId || !parentIds || parentIds.length == 0) {
-            return res.status(400).json({message: "Missing required fields"});
+        if (!name || !gender || !classId) {
+            return res.status(400).json({message: "Missing required fields: name, gender, and classId are required"});
         }
 
-        const parents = await prisma.parent.findMany({
-            where: { id: { in: parentIds } }
-        });
+        let parentConnectArray: any[] = [];
+        if (Array.isArray(parentIds) && parentIds.length > 0) {
+            const parents = await prisma.parent.findMany({
+                where: { id: { in: parentIds.map((id: any) => Number(id)) } }
+            });
 
-        if (parents.length !== parentIds.length) {
-            return res.status(400).json({ message: "Invalid parentId provided" });
+            if (parents.length > 0) {
+                parentConnectArray = parents.map((p) => ({
+                    parent: { connect: { id: p.id } }
+                }));
+            }
         }
-
 
         const student = await prisma.student.create({
             data: {
                 photo,
-                name,
+                name: name.trim(),
                 gender,
-                dob,
-                classId,
-                busId,
-
-                parents : {
-                    create: parentIds.map((parentId: number) => ({
-                        parent : {
-                            connect: {id: parentId}
-                        }
-                    }))
-                }
+                dob: dob ? new Date(dob) : null,
+                classId: Number(classId),
+                busId: busId ? Number(busId) : null,
+                admissionno: admissionno || `ADM-${Date.now().toString().slice(-4)}`,
+                adharnumber: adharnumber ? String(adharnumber).replace(/\D/g, '').slice(0, 12) : null,
+                mothertongue: mapMotherTongue(mothertongue),
+                socialcategory: mapSocialCategory(socialcategory),
+                bloodgroup: mapBloodGroup(bloodgroup),
+                address: address || null,
+                parents: parentConnectArray.length > 0 ? { create: parentConnectArray } : undefined
             },
-
             include: {
                 parents: {
                     include: {
@@ -172,13 +230,15 @@ router.post("/create-student", auth, async( req: AuthRequest, res: Response) => 
                 class: true,
                 bus: true
             }
-        })
-        
-        res.json({message: "Student created successfully", student})
+        });
 
-    } catch(err) {
-        console.log(err);
-        res.status(500).json({message: "Failed to create student"});
+        void serverCache.clear();
+        
+        res.json({message: "Student created successfully", data: student, student});
+
+    } catch(err: any) {
+        console.error("Error in /create-student:", err);
+        res.status(500).json({message: err?.message || "Failed to create student"});
     }
 })
 
