@@ -120,61 +120,107 @@ router.post("/create-subject", auth, async (req: AuthRequest, res: Response) => 
 
 
 router.post("/create-exam", auth, async(req: AuthRequest, res: Response) => {
-
     try {
-
         if (req.user.role !== 'TEACHER' && req.user.role !== 'PRINCIPAL' && req.user.role !== 'RECEPTIONIST') {
             return res.status(400).json({message : "UnAuthorized request"});
         }
 
-        const {exam_name, totalMarks, subjectId, examDate, classId} = req.body;
+        const { exam_name, name, totalMarks, subjectId, examDate, startDate, classId, subjects } = req.body;
+        const examTitle = exam_name || name;
+        const eDate = examDate ? new Date(examDate) : (startDate ? new Date(startDate) : new Date());
 
-        if (!exam_name || !totalMarks || !subjectId || !examDate || !classId) {
-            return res.status(500).json({message : "Missing required fields"});
+        if (!examTitle || !classId) {
+            return res.status(400).json({message : "Missing required fields: exam title and classId are required"});
         }
 
-        const existedExam = await prisma.exam.findUnique({
-            where: {
-                name_subjectId_classId: {
-                    name: exam_name,
-                    subjectId,
-                    classId
+        // Case 1: Standard single subject exam or multiple subjects array
+        const subjectsToCreate: Array<{ name: string; maxMarks: number }> = [];
+
+        if (Array.isArray(subjects) && subjects.length > 0) {
+            for (const s of subjects) {
+                if (s.name && s.name.trim()) {
+                    subjectsToCreate.push({
+                        name: s.name.trim(),
+                        maxMarks: Number(s.maxMarks) || Number(totalMarks) || 100
+                    });
                 }
             }
-        })
-
-        if (existedExam) {
-            return res.status(400).json({message: "Exam already existed try searching your exam."})
+        } else if (subjectId) {
+            const existingSubject = await prisma.subject.findUnique({ where: { id: Number(subjectId) } });
+            if (existingSubject) {
+                subjectsToCreate.push({
+                    name: existingSubject.name,
+                    maxMarks: Number(totalMarks) || 100
+                });
+            }
         }
 
-        const result = await prisma.$transaction( async(tx) => {
+        if (subjectsToCreate.length === 0) {
+            subjectsToCreate.push({
+                name: 'General',
+                maxMarks: Number(totalMarks) || 100
+            });
+        }
 
-            const exam = tx.exam.create({
-                data: {
-                    name: exam_name,
-                    totalMarks,
-                    subjectId,
-                    examDate,
-                    classId,  
-                },
-
-                include: {
-                    subject: true,
-                    class: true
+        const createdExams = await prisma.$transaction(async (tx) => {
+            const results = [];
+            for (const item of subjectsToCreate) {
+                // Ensure Subject exists
+                let subjectObj = await tx.subject.findUnique({ where: { name: item.name } });
+                if (!subjectObj) {
+                    subjectObj = await tx.subject.create({ data: { name: item.name } });
                 }
-            })
 
-            return exam;
-        })
+                // Ensure ClassSubject relation exists
+                const classSub = await tx.classSubject.findUnique({
+                    where: { classId_subjectId: { classId: Number(classId), subjectId: subjectObj.id } }
+                });
+                if (!classSub) {
+                    await tx.classSubject.create({
+                        data: { classId: Number(classId), subjectId: subjectObj.id }
+                    });
+                }
 
-        res.json({message: "Exam created successfully", data: result})
+                // Check if exam record already exists
+                const existingExam = await tx.exam.findUnique({
+                    where: {
+                        name_subjectId_classId: {
+                            name: examTitle,
+                            subjectId: subjectObj.id,
+                            classId: Number(classId)
+                        }
+                    }
+                });
 
+                if (!existingExam) {
+                    const created = await tx.exam.create({
+                        data: {
+                            name: examTitle,
+                            totalMarks: item.maxMarks,
+                            subjectId: subjectObj.id,
+                            examDate: eDate,
+                            classId: Number(classId)
+                        },
+                        include: {
+                            subject: true,
+                            class: true
+                        }
+                    });
+                    results.push(created);
+                } else {
+                    results.push(existingExam);
+                }
+            }
+            return results;
+        });
 
+        void serverCache.clear();
+
+        res.json({ message: "Exam created successfully", data: createdExams });
     } catch(err) {
-        console.log(err)
-        return res.status(400).json({message: "Error in creating the class"});
+        console.log(err);
+        return res.status(400).json({message: "Error in creating the exam"});
     }
-
 })
 
 

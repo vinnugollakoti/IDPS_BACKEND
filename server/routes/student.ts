@@ -734,11 +734,17 @@ router.post("/create-fee", auth, async(req: AuthRequest, res: Response) => {
             return fee;
         });
 
+        const studentInfo = await prisma.student.findUnique({
+            where: { id: Number(studentId) },
+            select: { id: true, name: true, admissionno: true }
+        });
+        const studentNameStr = studentInfo ? `${studentInfo.name} (#${studentInfo.admissionno || studentInfo.id})` : `Student ID #${studentId}`;
+
         void logAudit({
             req,
             action: "CREATE_FEE",
             tag: "FEE",
-            details: `Created new fee bill (${feeTitle} - ₹${total}) for Student ID #${studentId}`,
+            details: `[FEE ASSIGNED / INCREASED] Performed by ${req.user.name || req.user.role} (${req.user.role}). Created new ${feeTypeEnum} fee structure "${feeTitle}" of ₹${Number(total).toLocaleString('en-IN')} (Academic Year: ${academicYear}) for student ${studentNameStr}. Total fee bill increased by +₹${Number(total).toLocaleString('en-IN')}.`,
             entityType: "Fee",
             entityId: result.id,
         });
@@ -877,11 +883,18 @@ router.post("/create-payment", auth, async(req: AuthRequest, res: Response) => {
             }
         });
 
+        const feeWithStudent = await prisma.fee.findUnique({
+            where: { id: Number(targetFeeId) },
+            include: { student: true }
+        });
+        const stName = feeWithStudent?.student ? `${feeWithStudent.student.name} (#${feeWithStudent.student.admissionno || feeWithStudent.student.id})` : `Student Fee ID #${targetFeeId}`;
+        const feeCategory = feeWithStudent ? feeWithStudent.title || feeWithStudent.type : 'Fee';
+
         void logAudit({
             req,
             action: "CREATE_PAYMENT",
             tag: "FEE",
-            details: `Recorded ${method} payment of ₹${amount} for Fee ID #${targetFeeId} (Status: ${status})`,
+            details: `[FEE PAYMENT RECORDED] Performed by ${req.user.name || req.user.role} (${req.user.role}). Recorded ${method ? method.toUpperCase() : "CASH"} payment of ₹${Number(amount).toLocaleString('en-IN')} towards ${feeCategory} for ${stName}. Outstanding due decreased by -₹${Number(amount).toLocaleString('en-IN')}.${noteText ? ` Notes: ${noteText}` : ''}`,
             entityType: "Payment",
             entityId: payment.id,
         });
@@ -939,14 +952,23 @@ router.put("/update-fee/:id", auth, async(req: AuthRequest, res: Response) => {
                 type,
                 total,
                 academicYear
+            },
+            include: {
+                student: true
             }
-        })
+        });
+
+        const oldTotal = Number(fee_.total) || 0;
+        const newTotal = Number(total) || 0;
+        const diff = newTotal - oldTotal;
+        const changeDir = diff > 0 ? `INCREASED by +₹${diff.toLocaleString('en-IN')}` : diff < 0 ? `DECREASED by -₹${Math.abs(diff).toLocaleString('en-IN')}` : 'Unchanged total';
+        const stNameStr = (updatedFee as any).student ? `${(updatedFee as any).student.name} (#${(updatedFee as any).student.admissionno || (updatedFee as any).student.id})` : `Student ID #${fee_.studentId}`;
 
         void logAudit({
             req,
             action: "UPDATE_FEE",
             tag: "FEE",
-            details: `Updated Fee ID #${feeId} (${type}, ₹${total}, ${academicYear})`,
+            details: `[FEE BILL UPDATED] Performed by ${req.user.name || req.user.role} (${req.user.role}). Updated Fee ID #${feeId} for ${stNameStr}. Type: ${type}, Academic Year: ${academicYear}. Fee total was ${changeDir} (Previous: ₹${oldTotal.toLocaleString('en-IN')}, New: ₹${newTotal.toLocaleString('en-IN')}).`,
             entityType: "Fee",
             entityId: feeId,
         });
@@ -1000,11 +1022,16 @@ router.put("/update-payment/:id", auth, async(req: AuthRequest, res: Response) =
             }
         })
 
+        const oldAmt = Number(payment_.amount) || 0;
+        const newAmt = Number(amount) || 0;
+        const amtDiff = newAmt - oldAmt;
+        const amtChangeStr = amtDiff > 0 ? `amount INCREASED by +₹${amtDiff.toLocaleString('en-IN')}` : amtDiff < 0 ? `amount DECREASED by -₹${Math.abs(amtDiff).toLocaleString('en-IN')}` : 'amount unchanged';
+
         void logAudit({
             req,
             action: "UPDATE_PAYMENT",
             tag: "FEE",
-            details: `Updated Payment ID #${paymentId} (${method}, ₹${amount}, Status: ${status})`,
+            details: `[FEE PAYMENT UPDATED] Performed by ${req.user.name || req.user.role} (${req.user.role}). Updated Payment ID #${paymentId} for Fee ID #${feeId || payment_.feeId}. Payment ${amtChangeStr} (Previous: ₹${oldAmt.toLocaleString('en-IN')}, New: ₹${newAmt.toLocaleString('en-IN')}). Method: ${method}, Status: ${status}.`,
             entityType: "Payment",
             entityId: paymentId,
         });
