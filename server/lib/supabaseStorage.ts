@@ -232,3 +232,67 @@ export const uploadNotificationImage = async ({
     imageSizeBytes: parsed.sizeBytes,
   };
 };
+
+// ─── User Profile Photo Upload (user-profiles bucket) ─────────────────────────
+
+export const uploadUserProfilePhoto = async ({
+  imageBase64,
+  imageMimeType,
+  path,
+}: UploadImageInput) => {
+  const url = process.env.SUPABASE_URL?.replace(/\/+$/, "");
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const bucket = process.env.SUPABASE_USER_PROFILES_BUCKET ?? "user-profiles";
+
+  console.log(`[Supabase] uploadUserProfilePhoto → bucket: "${bucket}"`);
+
+  if (!url || !serviceRoleKey) {
+    console.error("[Supabase] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env");
+    throw new Error("Supabase storage is not configured");
+  }
+
+  let parsed: ParsedImage;
+  try {
+    parsed = parseBase64Image(imageBase64, imageMimeType, NOTIFICATION_IMAGE_MAX_BYTES, "ProfilePhoto");
+  } catch (err: any) {
+    console.error("[Supabase] Profile photo parse error:", err?.message);
+    throw err;
+  }
+
+  const objectPath = `${path}.${parsed.extension}`;
+  const uploadUrl = `${url}/storage/v1/object/${bucket}/${objectPath}`;
+
+  console.log(
+    `[Supabase] Uploading profile photo ${(parsed.sizeBytes / 1024).toFixed(1)} KB (${parsed.mimeType}) → ${uploadUrl}`
+  );
+
+  const response = await fetch(uploadUrl, {
+    method: "POST",
+    headers: {
+      Authorization: `Bearer ${serviceRoleKey}`,
+      apikey: serviceRoleKey,
+      "Content-Type": parsed.mimeType,
+      "Cache-Control": "31536000",
+      "x-upsert": "true",
+    },
+    body: parsed.buffer as unknown as BodyInit,
+  });
+
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    console.error(`[Supabase] Profile photo upload failed (HTTP ${response.status}):`, detail);
+    throw new Error(
+      `Supabase profile photo upload error (HTTP ${response.status}): ${detail || response.statusText}`
+    );
+  }
+
+  const publicUrl = `${url}/storage/v1/object/public/${bucket}/${objectPath}`;
+  console.log(`[Supabase] Profile photo upload success → ${publicUrl}`);
+
+  return {
+    imagePath: objectPath,
+    imageUrl: publicUrl,
+    imageMimeType: parsed.mimeType,
+    imageSizeBytes: parsed.sizeBytes,
+  };
+};

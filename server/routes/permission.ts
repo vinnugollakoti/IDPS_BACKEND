@@ -30,6 +30,7 @@ router.get("/staff", auth, async (req: AuthRequest, res: Response) => {
             id: true,
             phone: true,
             salary: true,
+            photo: true,
           },
         },
         userPermissions: {
@@ -106,6 +107,7 @@ router.get("/staff", auth, async (req: AuthRequest, res: Response) => {
         badge,
         allowedModules,
         phone: user.teacher?.phone,
+        photoUrl: user.teacher?.photo || undefined,
       };
     });
 

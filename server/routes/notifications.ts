@@ -165,7 +165,7 @@ router.post("/send-broadcast", auth, async (req: AuthRequest, res: Response) => 
     // ── Fetch target push tokens ──
     const recipientTokens = await fetchTokensByAudience(validAudience);
 
-    // ── Build Expo push payloads with Rich Content ──
+    // ── Build Expo push payloads with Rich Content & High-Level FCM properties ──
     const expoPushMessages = recipientTokens
       .map((r) => r.token.trim())
       .filter(Boolean)
@@ -176,16 +176,34 @@ router.post("/send-broadcast", auth, async (req: AuthRequest, res: Response) => 
         body: body.trim(),
         channelId: "default",
         priority: "high",
-        android: {
-          priority: "high",
-          ...(cleanImageUrl ? { notification: { image: cleanImageUrl } } : {}),
+        badge: 1,
+        mutableContent: true,
+        data: {
+          title: title.trim(),
+          body: body.trim(),
+          image: cleanImageUrl || null,
+          imageUrl: cleanImageUrl || null,
+          attachmentUrl: cleanImageUrl || null,
+          _displayInForeground: true,
         },
         ...(cleanImageUrl
           ? {
+              image: cleanImageUrl,
+              attachments: [{ url: cleanImageUrl }],
               richContent: { image: cleanImageUrl },
-              data: { image: cleanImageUrl },
             }
           : {}),
+        android: {
+          priority: "high",
+          channelId: "default",
+          notification: {
+            priority: "max",
+            sound: "default",
+            defaultSound: true,
+            defaultVibrateTimings: true,
+            ...(cleanImageUrl ? { image: cleanImageUrl } : {}),
+          },
+        },
       }));
 
     console.log(

@@ -96,14 +96,19 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
 
         const authUserId = resolveAuthUserId(req.user);
 
-        let where: { id?: { in: number[] }; teacherId?: number } = {};
+        let where: { OR?: Array<{ teacherId?: number; teachers?: { some: { teacherId: number } } }>; id?: { in: number[] } } = {};
         if (req.user.role === "TEACHER") {
             const teacher = await prisma.teacher.findUnique({
                 where: { userId: authUserId ?? -1 },
                 select: { id: true }
             });
             if (!teacher) return res.json({message: "Fetched classess successfully", data: []});
-            where = { teacherId: teacher.id };
+            where = {
+                OR: [
+                    { teacherId: teacher.id },
+                    { teachers: { some: { teacherId: teacher.id } } }
+                ]
+            };
         } else if (req.user.role === "PARENT") {
             if (!authUserId) return res.json({message: "Fetched classess successfully", data: []});
             const parent = await prisma.parent.findFirst({
@@ -140,6 +145,18 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
                         name: true,
                         phone: true,
                         gender: true,
+                    }
+                },
+                teachers: {
+                    include: {
+                        teacher: {
+                            select: {
+                                id: true,
+                                name: true,
+                                phone: true,
+                                gender: true,
+                            }
+                        }
                     }
                 },
                 students: {
@@ -515,7 +532,12 @@ router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
             if (!teacher) return res.json({ message: "Fetched students successfully", data: [] });
 
             const teacherClasses = await prisma.class.findMany({
-                where: { teacherId: teacher.id },
+                where: {
+                    OR: [
+                        { teacherId: teacher.id },
+                        { teachers: { some: { teacherId: teacher.id } } }
+                    ]
+                },
                 select: { id: true }
             });
             const classIds = teacherClasses.map((c) => c.id);
