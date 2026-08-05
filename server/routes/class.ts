@@ -44,6 +44,11 @@ router.post("/create-class", auth, async(req: AuthRequest, res: Response) => {
             return teacher;
         })
 
+        // The classes endpoint is cached for the Workspace screen. Invalidate
+        // it immediately so a newly-created class is visible without leaving
+        // and reopening the app.
+        void serverCache.clear();
+
         void logAudit({
             req,
             action: "CREATE_CLASS",
@@ -227,72 +232,133 @@ router.post("/create-exam", auth, async(req: AuthRequest, res: Response) => {
 router.post("/create-marks", auth, async(req: AuthRequest, res: Response) => {
     try { 
         if (req.user.role !== "TEACHER" && req.user.role !== "PRINCIPAL" && req.user.role !== "RECEPTIONIST") {
-            return res.status(400).json({message: "Unauthorized request"})
+            return res.status(400).json({message: "Unauthorized request"});
         }
 
         const {examId, marks, studentId} = req.body;
 
-        if (!examId || !marks || !studentId) {
-            return res.status(500).json({message: "Missing required fields"});
+        if (examId === undefined || marks === undefined || studentId === undefined || marks === null || marks === '') {
+            return res.status(400).json({message: "Missing required fields"});
+        }
+
+        const markNum = Number(marks);
+        if (isNaN(markNum) || markNum < 0) {
+            return res.status(400).json({message: "Marks must be a valid non-negative number"});
+        }
+
+        const exam = await prisma.exam.findUnique({
+            where: { id: Number(examId) }
+        });
+
+        if (!exam) {
+            return res.status(404).json({message: "Exam not found"});
+        }
+
+        if (markNum > exam.totalMarks) {
+            return res.status(400).json({message: `Marks obtained (${markNum}) cannot exceed maximum marks (${exam.totalMarks})`});
         }
 
         const result = await prisma.mark.upsert({
             where: {
                 examId_studentId: {
-                    examId,
-                    studentId
+                    examId: Number(examId),
+                    studentId: Number(studentId)
                 }
             },
             update: {
-                marks
+                marks: markNum
             },
             create: {
-                examId,
-                marks,
-                studentId
+                examId: Number(examId),
+                marks: markNum,
+                studentId: Number(studentId)
             }
-        })
+        });
 
-
-        res.json({message: "Marks Created/Updated successfully!", data: result })
-    } catch (err) {
-        console.log(err)
-        return res.status(400).json({message: "Error creating marks details, Contact developer"});
+        void serverCache.clear();
+        res.json({message: "Marks Created/Updated successfully!", data: result });
+    } catch (err: any) {
+        console.error("Error creating marks:", err);
+        return res.status(400).json({message: err?.message || "Error creating marks details"});
     }
 })
 
 router.put("/update-class/:id", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if ((req.user.role) !== "PRINCIPAL" &&  req.user.role !== "RECEPTIONIST") {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
             return res.status(400).json({message : "UnAuthorized request"});
         }
 
-        const {name, section, teacherId} = req.body;
-
+        const {name, section, teacherId, teacherIds} = req.body;
         const classId = Number(req.params.id);
 
         const isclassexisted = await prisma.class.findUnique({
             where: {id: classId}
-        }) 
+        });
 
         if (!isclassexisted) {
             return res.status(400).json({message: "Class not found"});
         }
 
-        const class_ = await prisma.class.update({
-            where: {id: classId},
-            data: {
-                name,
-                section,
-                teacherId   
+        let targetTeacherIds: number[] = [];
+        if (Array.isArray(teacherIds) && teacherIds.length > 0) {
+            targetTeacherIds = teacherIds.map((id: any) => Number(id)).filter(Number.isFinite);
+        } else if (teacherId !== undefined && teacherId !== null) {
+            const primaryId = Number(teacherId);
+            if (Number.isFinite(primaryId)) targetTeacherIds = [primaryId];
+        }
+
+        const primaryTeacherId = targetTeacherIds.length > 0 ? targetTeacherIds[0] : (teacherId !== undefined ? Number(teacherId) : isclassexisted.teacherId);
+
+        const updatedClass = await prisma.$transaction(async (tx) => {
+            // Delete existing teacher assignments for this class
+            await tx.classTeacher.deleteMany({
+                where: { classId }
+            });
+
+            // Create new teacher assignments
+            if (targetTeacherIds.length > 0) {
+                await tx.classTeacher.createMany({
+                    data: targetTeacherIds.map((tId) => ({
+                        classId,
+                        teacherId: tId
+                    }))
+                });
             }
-        })
 
+            return tx.class.update({
+                where: { id: classId },
+                data: {
+                    name: name !== undefined ? name : isclassexisted.name,
+                    section: section !== undefined ? section : isclassexisted.section,
+                    teacherId: primaryTeacherId
+                },
+                include: {
+                    teacher: true,
+                    teachers: {
+                        include: {
+                            teacher: true
+                        }
+                    }
+                }
+            });
+        });
 
-        res.json({message: "Class details updated successfully", data: class_});
+        void serverCache.clear();
+
+        void logAudit({
+            req,
+            action: "UPDATE_CLASS_ASSIGNMENTS",
+            tag: "CLASS",
+            details: `Updated teacher assignments for Class ${updatedClass.name} ${updatedClass.section}`,
+            entityType: "Class",
+            entityId: updatedClass.id,
+        });
+
+        res.json({message: "Class details updated successfully", data: updatedClass});
     } catch(err) {
-        console.log(err)
-        return res.status(400).json({message: "Error updating class details, Contact developer"})
+        console.error("Error updating class details:", err);
+        return res.status(400).json({message: "Error updating class details, Contact developer"});
     }
 })
 
@@ -446,7 +512,81 @@ router.put("/update-subject-classes/:id", auth, async(req: AuthRequest, res: Res
         console.log(err);
         return res.status(400).json({ message: "Error updating subject class mappings, Contact developer" });
     }
-})
+});
+
+router.delete("/delete-class/:id", auth, async (req: AuthRequest, res: Response) => {
+    try {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
+            return res.status(400).json({ message: "UnAuthorized request" });
+        }
+
+        const classId = Number(req.params.id);
+        if (!Number.isFinite(classId) || classId <= 0) {
+            return res.status(400).json({ message: "Invalid class ID" });
+        }
+
+        const existingClass = await prisma.class.findUnique({
+            where: { id: classId }
+        });
+
+        if (!existingClass) {
+            return res.status(404).json({ message: "Class not found" });
+        }
+
+        await prisma.$transaction(async (tx) => {
+            // Delete dependent records linked to the class
+            await tx.classSubject.deleteMany({ where: { classId } });
+            await tx.classTeacher.deleteMany({ where: { classId } });
+            await tx.timeTable.deleteMany({ where: { classId } });
+
+            // Delete exams & related marks for this class
+            const classExams = await tx.exam.findMany({ where: { classId }, select: { id: true } });
+            const examIds = classExams.map((e) => e.id);
+            if (examIds.length > 0) {
+                await tx.mark.deleteMany({ where: { examId: { in: examIds } } });
+                await tx.exam.deleteMany({ where: { classId } });
+            }
+
+            // Delete attendance sessions & records for this class
+            const sessions = await tx.attendanceSession.findMany({ where: { classId }, select: { id: true } });
+            const sessionIds = sessions.map((s) => s.id);
+            if (sessionIds.length > 0) {
+                await tx.attendance.deleteMany({ where: { sessionId: { in: sessionIds } } });
+                await tx.attendanceSession.deleteMany({ where: { classId } });
+            }
+
+            // Delete students belonging to this class (and their associated records)
+            const classStudents = await tx.student.findMany({ where: { classId }, select: { id: true } });
+            const studentIds = classStudents.map((s) => s.id);
+            if (studentIds.length > 0) {
+                await tx.parentStudent.deleteMany({ where: { studentId: { in: studentIds } } });
+                await tx.fee.deleteMany({ where: { studentId: { in: studentIds } } });
+                await tx.mark.deleteMany({ where: { studentId: { in: studentIds } } });
+                await tx.attendance.deleteMany({ where: { studentId: { in: studentIds } } });
+                await tx.student.deleteMany({ where: { classId } });
+            }
+
+            // Delete the class
+            await tx.class.delete({ where: { id: classId } });
+        });
+
+        void serverCache.clear();
+
+        void logAudit({
+            req,
+            action: "DELETE_CLASS",
+            tag: "CLASS",
+            details: `Deleted Class ${existingClass.name} ${existingClass.section}`,
+            entityType: "Class",
+            entityId: existingClass.id,
+        });
+
+        return res.json({ message: "Class deleted successfully" });
+    } catch (err: any) {
+        console.error("Error deleting class:", err);
+        return res.status(400).json({ message: err?.message || "Failed to delete class" });
+    }
+});
 
 router.put("/update-exam/:id", auth, async (req: AuthRequest, res: Response) => {
     try {

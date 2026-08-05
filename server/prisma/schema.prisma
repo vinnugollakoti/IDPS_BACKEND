@@ -83,6 +83,8 @@ model Class {
   teacherId Int?
   teacher   Teacher? @relation(fields: [teacherId], references: [id])
 
+  teachers ClassTeacher[]
+
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
@@ -97,6 +99,7 @@ model Class {
 
 model Teacher {
   id     Int      @id @default(autoincrement())
+  photo  String?
   name   String
   phone  String
   gender Gender
@@ -106,12 +109,25 @@ model Teacher {
   user   User @relation(fields: [userId], references: [id])
 
   classes         Class[]
+  assignedClasses ClassTeacher[]
   timetable       TimeTable[]
   attendanceTaken AttendanceSession[]
   attendances     TeacherAttendance[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model ClassTeacher {
+  classId   Int
+  teacherId Int
+
+  class   Class   @relation(fields: [classId], references: [id], onDelete: Cascade)
+  teacher Teacher @relation(fields: [teacherId], references: [id], onDelete: Cascade)
+
+  @@id([classId, teacherId])
+  @@index([classId])
+  @@index([teacherId])
 }
 
 model TeacherAttendance {

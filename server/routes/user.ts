@@ -2,6 +2,7 @@ import express, {Request, Response} from "express";
 import prisma from "../prisma/client";
 import { AuthRequest, auth, isExecutiveRole } from "../middleware/auth";
 import { serverCache } from "../utils/cache";
+import { logAudit } from "../utils/audit";
 const router = express.Router();
 
 const resolveAuthUserId = (user: any) => {
@@ -89,55 +90,136 @@ router.post("/create-parent", auth, async(req: AuthRequest, res: Response) => {
     }
 });
 
+import { uploadUserProfilePhoto } from "../lib/supabaseStorage";
+
 router.post("/create-teacher", auth, async(req: AuthRequest, res: Response) => {
     try {
         if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
             return res.status(400).json({message : "UnAuthorized area"});
         }
 
-        const {name, email, phone, gender} = req.body;
+        const {name, email, phone, gender, photo, photoBase64, photoMimeType} = req.body;
 
-        if (!name || !email || !phone || !gender) {
-            return res.status(500).json({message : "Missing required fields"});
+        if (!name || !email || !phone) {
+            return res.status(400).json({message : "Missing required fields: name, email, and phone are required"});
         }
 
+        const teacherEmail = String(email).trim().toLowerCase();
         const existing = await prisma.user.findUnique({
-            where : {email}
-        })
+            where : { email: teacherEmail }
+        });
 
         if (existing) {
-            return res.status(400).json({message : "User is already existed"});
+            return res.status(400).json({message : "User with this email already exists"});
+        }
+
+        const tGender: any = gender === 'FEMALE' ? 'FEMALE' : 'MALE';
+        let photoUrl: string | null = photo && typeof photo === 'string' && photo.startsWith('http') ? photo : null;
+
+        if (!photoUrl && photoBase64) {
+            try {
+                const uploaded = await uploadUserProfilePhoto({
+                    imageBase64: photoBase64,
+                    imageMimeType: photoMimeType || 'image/jpeg',
+                    path: `teachers/teacher_${Date.now()}`
+                });
+                photoUrl = uploaded.imageUrl;
+            } catch (uploadErr) {
+                console.error("Failed to upload teacher profile photo to Supabase:", uploadErr);
+            }
         }
 
         const result = await prisma.$transaction( async (tx) => {
-
             const user = await tx.user.create({
                 data : {
-                    name,
-                    email,
+                    name: name.trim(),
+                    email: teacherEmail,
                     role: "TEACHER",
-                    gender
+                    gender: tGender
                 }
-            })
+            });
 
             const teacher = await tx.teacher.create({
                 data : {
-                    name,
-                    phone,
-                    gender,
+                    name: name.trim(),
+                    photo: photoUrl,
+                    phone: String(phone).trim(),
+                    gender: tGender,
                     userId: user.id
                 }
-            })
+            });
 
-            return {user, teacher}
+            return {user, teacher};
         });
 
-        res.json({message : "Teacher created successfully", data: result})
-    } catch(err) {
-        console.log(err);
-        res.status(500).json({message : "Failed to create teacher"})
+        void serverCache.clear();
+
+        void logAudit({
+            req,
+            action: "CREATE_TEACHER",
+            tag: "AUTH",
+            details: `Created Teacher ${name.trim()} (${teacherEmail})`,
+            entityType: "Teacher",
+            entityId: result.teacher.id,
+        });
+
+        res.json({message : "Teacher created successfully", data: result});
+    } catch(err: any) {
+        console.error("Error creating teacher:", err);
+        res.status(500).json({message : err?.message || "Failed to create teacher"});
     }
-})
+});
+
+router.delete("/delete-teacher/:id", auth, async(req: AuthRequest, res: Response) => {
+    try {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
+            return res.status(400).json({message : "UnAuthorized area"});
+        }
+
+        const teacherId = Number(req.params.id);
+        if (!Number.isFinite(teacherId) || teacherId <= 0) {
+            return res.status(400).json({message: "Invalid teacher ID"});
+        }
+
+        const teacher = await prisma.teacher.findUnique({
+            where: { id: teacherId }
+        });
+
+        if (!teacher) {
+            return res.status(404).json({message: "Teacher not found"});
+        }
+
+        await prisma.$transaction(async (tx) => {
+            // Unlink class assignments
+            await tx.classTeacher.deleteMany({ where: { teacherId } });
+            await tx.class.updateMany({
+                where: { teacherId },
+                data: { teacherId: null }
+            });
+            // Unlink timetable entries
+            await tx.timeTable.deleteMany({ where: { teacherId } });
+            // Delete teacher record & user profile
+            await tx.teacher.delete({ where: { id: teacherId } });
+            await tx.user.delete({ where: { id: teacher.userId } }).catch(() => {});
+        });
+
+        void serverCache.clear();
+
+        void logAudit({
+            req,
+            action: "DELETE_TEACHER",
+            tag: "AUTH",
+            details: `Deleted Teacher ${teacher.name}`,
+            entityType: "Teacher",
+            entityId: teacher.id,
+        });
+
+        res.json({message: "Teacher deleted successfully"});
+    } catch(err: any) {
+        console.error("Error deleting teacher:", err);
+        res.status(500).json({message: err?.message || "Failed to delete teacher"});
+    }
+});
 
 
 const mapMotherTongue = (value?: string | null) => {
@@ -358,7 +440,7 @@ router.put("/update-teacher/:id", auth, async (req: AuthRequest, res: Response) 
             return res.status(400).json({ message: "UnAuthorized request" });
         }
 
-        const { name, email, phone, gender, salary } = req.body;
+        const { name, email, phone, gender, salary, photo, photoBase64, photoMimeType } = req.body;
         const teacherId = Number(req.params.id);
 
         const teacher = await prisma.teacher.findUnique({
@@ -368,6 +450,21 @@ router.put("/update-teacher/:id", auth, async (req: AuthRequest, res: Response) 
 
         if (!teacher) {
             return res.status(400).json({ message: "Teacher not found" });
+        }
+
+        let photoUrl: string | undefined = photo && typeof photo === 'string' && photo.startsWith('http') ? photo : undefined;
+
+        if (!photoUrl && photoBase64) {
+            try {
+                const uploaded = await uploadUserProfilePhoto({
+                    imageBase64: photoBase64,
+                    imageMimeType: photoMimeType || 'image/jpeg',
+                    path: `teachers/teacher_${teacherId}_${Date.now()}`
+                });
+                photoUrl = uploaded.imageUrl;
+            } catch (uploadErr) {
+                console.error("Failed to upload teacher profile photo to Supabase:", uploadErr);
+            }
         }
 
         const result = await prisma.$transaction(async (tx) => {
@@ -397,7 +494,8 @@ router.put("/update-teacher/:id", auth, async (req: AuthRequest, res: Response) 
                     ...(name && { name }),
                     ...(phone && { phone }),
                     ...(gender && { gender }),
-                    ...(salary && { salary })
+                    ...(salary && { salary }),
+                    ...(photoUrl && { photo: photoUrl })
                 }
             });
 
