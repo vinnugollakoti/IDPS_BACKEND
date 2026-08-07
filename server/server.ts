@@ -82,16 +82,16 @@ const checkMailService = (): ServiceHealth => {
 const checkSupabaseStorage = async (): Promise<ServiceHealth> => {
     const supabaseUrl = normalizeSupabaseUrl();
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const bucket = process.env.SUPABASE_TEACHER_ATTENDANCE_BUCKET ?? "teacher-attendance";
+    const bucketAttendance = process.env.SUPABASE_TEACHER_ATTENDANCE_BUCKET ?? "teacher-attendance";
+    const bucketProfiles = process.env.SUPABASE_USER_PROFILES_BUCKET ?? "user-profiles";
 
-    if (!supabaseUrl || !serviceRoleKey || !bucket) {
+    if (!supabaseUrl || !serviceRoleKey) {
         return {
             status: "not_configured",
             message: "Supabase Storage configuration is incomplete",
             details: {
                 supabaseUrlConfigured: Boolean(supabaseUrl),
                 serviceRoleKeyConfigured: Boolean(serviceRoleKey),
-                bucket
             }
         };
     }
@@ -99,42 +99,41 @@ const checkSupabaseStorage = async (): Promise<ServiceHealth> => {
     try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 4000);
-        const response = await fetch(`${supabaseUrl}/storage/v1/bucket/${bucket}`, {
-            method: "GET",
-            headers: {
-                Authorization: `Bearer ${serviceRoleKey}`,
-                apikey: serviceRoleKey
-            },
-            signal: controller.signal
-        });
+        const [resAtt, resProf] = await Promise.all([
+            fetch(`${supabaseUrl}/storage/v1/bucket/${bucketAttendance}`, {
+                method: "GET",
+                headers: { Authorization: `Bearer ${serviceRoleKey}`, apikey: serviceRoleKey },
+                signal: controller.signal
+            }).catch(() => null),
+            fetch(`${supabaseUrl}/storage/v1/bucket/${bucketProfiles}`, {
+                method: "GET",
+                headers: { Authorization: `Bearer ${serviceRoleKey}`, apikey: serviceRoleKey },
+                signal: controller.signal
+            }).catch(() => null)
+        ]);
         clearTimeout(timeout);
 
-        if (!response.ok) {
-            const detail = await response.text().catch(() => "");
+        const attOk = resAtt?.ok ?? false;
+        const profOk = resProf?.ok ?? false;
+
+        if (!attOk && !profOk) {
             return {
                 status: "down",
-                message: "Supabase Storage bucket check failed",
-                details: {
-                    bucket,
-                    statusCode: response.status,
-                    error: detail || response.statusText
-                }
+                message: "Supabase Storage buckets check failed",
+                details: { bucketAttendance: attOk, bucketProfiles: profOk }
             };
         }
 
         return {
             status: "up",
-            message: "Supabase Storage bucket is reachable",
-            details: { bucket }
+            message: "Supabase Storage buckets are reachable",
+            details: { bucketAttendance: attOk, bucketProfiles: profOk }
         };
     } catch (err) {
         return {
             status: "down",
             message: "Supabase Storage check failed",
-            details: {
-                bucket,
-                error: err instanceof Error ? err.message : "Unknown Supabase Storage error"
-            }
+            details: { error: err instanceof Error ? err.message : "Unknown Supabase Storage error" }
         };
     }
 };
@@ -187,6 +186,10 @@ app.get("/health-check", async (_req: Request, res: Response) => {
         });
     }
 })
+
+app.get("/health", async (req: Request, res: Response) => {
+    return (app as any)._router.handle({ ...req, url: "/health-check" }, res);
+});
 
 app.use("/", UserRouter);
 app.use("/auth", AuthRouter);
