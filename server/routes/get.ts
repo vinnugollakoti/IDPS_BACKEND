@@ -1,6 +1,6 @@
 import express, {Request, Response} from "express";
 import prisma from "../prisma/client";
-import { AuthRequest, auth, isExecutiveRole } from "../middleware/auth";
+import { AuthRequest, auth, isExecutiveRole, isStaffRole } from "../middleware/auth";
 import { serverCache } from "../utils/cache";
 const router = express.Router();
 
@@ -12,13 +12,8 @@ const resolveAuthUserId = (user: any) => {
 
 router.get("/get-exams", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (
-            req.user.role !== "PRINCIPAL" &&
-            req.user.role !== "RECEPTIONIST" &&
-            req.user.role !== "TEACHER" &&
-            req.user.role !== "PARENT"
-        ) {
-            return res.status(400).json({message : "UnAuthorized request"});
+        if (!isStaffRole(req.user.role) && req.user.role !== "PARENT") {
+            return res.status(401).json({message : "UnAuthorized request"});
         }
 
         const authUserId = resolveAuthUserId(req.user);
@@ -85,13 +80,8 @@ router.get("/get-exams", auth, async(req: AuthRequest, res: Response) => {
 
 router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (
-            req.user.role !== "PRINCIPAL" &&
-            req.user.role !== "RECEPTIONIST" &&
-            req.user.role !== "TEACHER" &&
-            req.user.role !== "PARENT"
-        ) {
-            return res.status(400).json({message : "UnAuthorized request"});
+        if (!isStaffRole(req.user.role) && req.user.role !== "PARENT") {
+            return res.status(401).json({message : "UnAuthorized request"});
         }
 
         const authUserId = resolveAuthUserId(req.user);
@@ -238,7 +228,7 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
 
 router.get("/get-teachers", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if ((req.user.role) !== "PRINCIPAL" &&  req.user.role !== "RECEPTIONIST") {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
             return res.status(400).json({message : "UnAuthorized request"});
         }
 
@@ -260,7 +250,7 @@ router.get("/get-teachers", auth, async(req: AuthRequest, res: Response) => {
 
 router.get("/get-parents", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if ((req.user.role) !== "PRINCIPAL" &&  req.user.role !== "RECEPTIONIST") {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
             return res.status(400).json({message : "UnAuthorized request"});
         }
 
@@ -285,13 +275,8 @@ router.get("/get-parents", auth, async(req: AuthRequest, res: Response) => {
 
 router.get("/get-marks", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (
-            req.user.role !== "PRINCIPAL" &&
-            req.user.role !== "RECEPTIONIST" &&
-            req.user.role !== "TEACHER" &&
-            req.user.role !== "PARENT"
-        ) {
-            return res.status(400).json({message : "UnAuthorized request"});
+        if (!isStaffRole(req.user.role) && req.user.role !== "PARENT") {
+            return res.status(401).json({message : "UnAuthorized request"});
         }
 
         const authUserId = resolveAuthUserId(req.user);
@@ -341,13 +326,8 @@ router.get("/get-marks", auth, async(req: AuthRequest, res: Response) => {
 
 router.get("/get-subjects", auth, async (req: AuthRequest, res: Response) => {
     try {
-        if (
-            req.user.role !== "PRINCIPAL" &&
-            req.user.role !== "RECEPTIONIST" &&
-            req.user.role !== "TEACHER" &&
-            req.user.role !== "PARENT"
-        ) {
-            return res.status(400).json({ message: "UnAuthorized request" });
+        if (!isStaffRole(req.user.role) && req.user.role !== "PARENT") {
+            return res.status(401).json({ message: "UnAuthorized request" });
         }
 
         const authUserId = resolveAuthUserId(req.user);
@@ -419,13 +399,8 @@ router.get("/get-subjects", auth, async (req: AuthRequest, res: Response) => {
 
 router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (
-            req.user.role !== "PRINCIPAL" &&
-            req.user.role !== "RECEPTIONIST" &&
-            req.user.role !== "TEACHER" &&
-            req.user.role !== "PARENT"
-        ) {
-            return res.status(400).json({message : "UnAuthorized request"});
+        if (!isStaffRole(req.user.role) && req.user.role !== "PARENT") {
+            return res.status(401).json({message : "UnAuthorized request"});
         }
 
         const feeCacheKey = `get-fees:${req.user.role}:${req.user.id}`;
@@ -511,13 +486,8 @@ router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
 
 router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
     try {
-        if (
-            req.user.role !== "PRINCIPAL" &&
-            req.user.role !== "RECEPTIONIST" &&
-            req.user.role !== "TEACHER" &&
-            req.user.role !== "PARENT"
-        ) {
-            return res.status(400).json({ message: "UnAuthorized request" });
+        if (!isStaffRole(req.user.role) && req.user.role !== "PARENT") {
+            return res.status(401).json({ message: "UnAuthorized request" });
         }
 
         const authUserId = resolveAuthUserId(req.user);

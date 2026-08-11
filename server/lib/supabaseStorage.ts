@@ -233,6 +233,25 @@ export const uploadNotificationImage = async ({
   };
 };
 
+export const uploadExpenseBill = async ({ imageBase64, imageMimeType, path }: UploadImageInput) => {
+  const url = process.env.SUPABASE_URL?.replace(/\/+$/, "");
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const bucket = process.env.SUPABASE_EXPENSE_BILL_BUCKET ?? "expense-bills";
+  if (!url || !serviceRoleKey) throw new Error("Supabase storage is not configured");
+  const parsed = parseBase64Image(imageBase64, imageMimeType, 15 * 1024 * 1024, "ExpenseBill");
+  const objectPath = `${path}.${parsed.extension}`;
+  const response = await fetch(`${url}/storage/v1/object/${bucket}/${objectPath}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${serviceRoleKey}`, apikey: serviceRoleKey, "Content-Type": parsed.mimeType, "Cache-Control": "31536000", "x-upsert": "false" },
+    body: parsed.buffer as unknown as BodyInit,
+  });
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Failed to upload expense bill to Supabase${detail ? `: ${detail}` : ""}`);
+  }
+  return { billPath: objectPath, billUrl: `${url}/storage/v1/object/public/${bucket}/${objectPath}`, billMimeType: parsed.mimeType };
+};
+
 // ─── User Profile Photo Upload (user-profiles bucket) ─────────────────────────
 
 export const uploadUserProfilePhoto = async ({
