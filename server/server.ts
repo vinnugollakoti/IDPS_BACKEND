@@ -9,6 +9,8 @@ import UserRouter from "./routes/user"
 import GetRouter from "./routes/get"
 import NotificationsRouter from "./routes/notifications"
 import PermissionRouter from "./routes/permission"
+import HomeworkRouter from "./routes/homework"
+import ExpensesRouter from "./routes/expenses"
 import prisma from "./prisma/client";
 dotenv.config();
 
@@ -145,7 +147,7 @@ const checkJwt = (): ServiceHealth => {
     };
 };
 
-app.get("/health-check", async (_req: Request, res: Response) => {
+const getHealthCheckResponse = async (_req: Request, res: Response) => {
     try {
         const [database, supabaseStorage] = await Promise.all([
             checkDatabase(),
@@ -185,11 +187,10 @@ app.get("/health-check", async (_req: Request, res: Response) => {
             timestamp: new Date().toISOString()
         });
     }
-})
+};
 
-app.get("/health", async (req: Request, res: Response) => {
-    return (app as any)._router.handle({ ...req, url: "/health-check" }, res);
-});
+app.get("/health-check", getHealthCheckResponse);
+app.get("/health", getHealthCheckResponse);
 
 app.use("/", UserRouter);
 app.use("/auth", AuthRouter);
@@ -199,6 +200,8 @@ app.use("/teacher", TeacherRouter);
 app.use("/get", GetRouter);
 app.use("/notifications", NotificationsRouter);
 app.use("/permission", PermissionRouter);
+app.use("/homework", HomeworkRouter);
+app.use("/expenses", ExpensesRouter);
 
 
 app.listen(process.env.PORT, () => {

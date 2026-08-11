@@ -177,6 +177,7 @@ model User {
   pushTokens        PushToken[]
   sentNotifications BroadcastNotification[]
   auditLogs         AuditLog[]
+  expensesCreated   Expense[]
 
   userPermissions   UserPermission[]
 
@@ -400,6 +401,29 @@ model Payment {
   @@index([verifiedById])
 }
 
+model Expense {
+  id              Int                   @id @default(autoincrement())
+  title           String
+  category        ExpenseCategory
+  amount          Decimal               @db.Decimal(12, 2)
+  transactionDate DateTime              @db.Date
+  paymentMode     ExpensePaymentMode
+  onlineAccount   ExpenseOnlineAccount?
+  notes           String?
+  billUrl         String?
+  billPath        String?
+  billMimeType    String?
+  createdById     Int
+  createdBy       User                  @relation(fields: [createdById], references: [id])
+  createdAt       DateTime              @default(now())
+  updatedAt       DateTime              @updatedAt
+
+  @@index([category])
+  @@index([transactionDate])
+  @@index([paymentMode])
+  @@index([createdById])
+}
+
 model Feedback {
   id        Int      @id @default(autoincrement())
   title     String
@@ -433,6 +457,27 @@ enum FeeType {
   BUS
   EXAM
   OTHER
+}
+
+enum ExpenseCategory {
+  STATIONERY
+  EVENTS
+  SPORTS_EQUIPMENT
+  CLASS_MISCELLANEOUS
+  COMPUTER_EQUIPMENT
+  UTILITY
+  FURNITURE
+  OTHER
+}
+
+enum ExpensePaymentMode {
+  CASH
+  ONLINE
+}
+
+enum ExpenseOnlineAccount {
+  SANKALP
+  NARESH_SIR
 }
 
 enum Relation {
@@ -540,4 +585,3 @@ model AuditLog {
   @@index([action])
   @@index([createdAt])
 }
-
