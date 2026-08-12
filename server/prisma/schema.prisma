@@ -313,6 +313,8 @@ model Exam {
   classId    Int
   class      Class    @relation(fields: [classId], references: [id])
 
+  isReleased Boolean  @default(false)
+
   marks Mark[]
 
   @@unique([name, subjectId, classId], name: "name_subjectId_classId")

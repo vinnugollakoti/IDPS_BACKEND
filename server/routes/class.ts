@@ -5,6 +5,11 @@ import { logAudit } from "../utils/audit";
 import { serverCache } from "../utils/cache";
 const router = express.Router();
 
+const resolveAuthUserId = (user: any) => {
+    const value = Number(user?.userId ?? user?.id);
+    return Number.isFinite(value) && value > 0 ? value : null;
+};
+
 
 router.post("/create-class", auth, async(req: AuthRequest, res: Response) => {
     try {
@@ -221,12 +226,93 @@ router.post("/create-exam", auth, async(req: AuthRequest, res: Response) => {
 
         void serverCache.clear();
 
-        res.json({ message: "Exam created successfully", data: createdExams });
-    } catch(err) {
+    } catch (err) {
         console.log(err);
-        return res.status(400).json({message: "Error in creating the exam"});
+        return res.status(400).json({ message: "Error in creating the exam" });
     }
-})
+});
+router.post("/release-exam", auth, async(req: AuthRequest, res: Response) => {
+    try {
+        if (!isStaffRole(req.user.role)) {
+            return res.status(403).json({ message: "Unauthorized request" });
+        }
+
+        const { examId, examName, classId, isReleased } = req.body;
+        const releaseState = isReleased !== undefined ? Boolean(isReleased) : true;
+
+        if (!examId && (!examName || !classId)) {
+            return res.status(400).json({ message: "Missing required fields: examId or examName and classId" });
+        }
+
+        const authUserId = resolveAuthUserId(req.user);
+
+        // Verification: If teacher, verify they are assigned as class teacher or teacher for this class
+        if (req.user.role === "TEACHER") {
+            const teacher = await prisma.teacher.findUnique({
+                where: { userId: authUserId ?? -1 },
+                select: { id: true }
+            });
+            if (!teacher) {
+                return res.status(403).json({ message: "Teacher account not found" });
+            }
+
+            const targetClassId = Number(classId);
+            if (targetClassId) {
+                const cls = await prisma.class.findFirst({
+                    where: {
+                        id: targetClassId,
+                        OR: [
+                            { teacherId: teacher.id },
+                            { teachers: { some: { teacherId: teacher.id } } }
+                        ]
+                    }
+                });
+                if (!cls) {
+                    return res.status(403).json({ message: "You can only release marks for your assigned class" });
+                }
+            }
+        }
+
+        // Perform release update
+        let updatedCount = 0;
+        if (examId) {
+            const updated = await prisma.exam.updateMany({
+                where: { id: Number(examId) },
+                data: { isReleased: releaseState }
+            });
+            updatedCount = updated.count;
+        } else if (examName && classId) {
+            const updated = await prisma.exam.updateMany({
+                where: {
+                    name: String(examName),
+                    classId: Number(classId)
+                },
+                data: { isReleased: releaseState }
+            });
+            updatedCount = updated.count;
+        }
+
+        await logAudit({
+            req,
+            action: releaseState ? "RELEASE_EXAM_RESULTS" : "UNRELEASE_EXAM_RESULTS",
+            tag: "EXAM" as any,
+            details: `${releaseState ? 'Released' : 'Unreleased'} exam results (${examName || examId}) for Class ID #${classId}`,
+            entityType: "Exam",
+            entityId: String(examId || classId),
+        });
+
+        void serverCache.clear();
+
+        return res.json({
+            message: `Successfully ${releaseState ? 'released' : 'unreleased'} exam results for parents.`,
+            isReleased: releaseState,
+            updatedCount
+        });
+    } catch (err: any) {
+        console.error("Error releasing exam:", err);
+        return res.status(500).json({ message: "Error releasing exam results" });
+    }
+});
 
 
 router.post("/create-marks", auth, async(req: AuthRequest, res: Response) => {
