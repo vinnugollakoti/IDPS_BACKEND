@@ -282,7 +282,7 @@ router.get("/get-marks", auth, async(req: AuthRequest, res: Response) => {
         const authUserId = resolveAuthUserId(req.user);
 
         let where: {
-            exam?: { classId?: { in: number[] } };
+            exam?: { classId?: { in: number[] }; isReleased?: boolean };
             student?: { parents?: { some?: { parentId?: number } } };
         } = {};
 
@@ -305,7 +305,10 @@ router.get("/get-marks", auth, async(req: AuthRequest, res: Response) => {
                 select: { id: true }
             });
             if (!parent) return res.json({message: "Fetched marks successfully", data: []});
-            where = { student: { parents: { some: { parentId: parent.id } } } };
+            where = {
+                student: { parents: { some: { parentId: parent.id } } },
+                exam: { isReleased: true }
+            };
         }
 
         const marks = await prisma.mark.findMany({
