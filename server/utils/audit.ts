@@ -31,9 +31,32 @@ export async function logAudit(options: LogAuditOptions): Promise<void> {
     const { req, action, tag, details, entityType, entityId } = options;
     const user = req.user;
 
-    if (!user || !user.id) {
+    const rawUserId = user?.userId ?? user?.id;
+    if (!rawUserId) {
       return;
     }
+
+    const userId = Number(rawUserId);
+
+    // Fetch rich performer details (Name, Phone, Role) from DB
+    const performer = await (prisma as any).user.findUnique({
+      where: { id: userId },
+      select: {
+        id: true,
+        name: true,
+        role: true,
+        teacher: { select: { phone: true, name: true } },
+        parent: { select: { phone1: true, name: true } },
+      },
+    });
+
+    const performerName = performer?.name || performer?.teacher?.name || performer?.parent?.name || user?.name || user?.role || "Staff Member";
+    const performerPhone = performer?.teacher?.phone || performer?.parent?.phone1 || "N/A";
+    const performerRole = performer?.role || user?.role || "STAFF";
+
+    const enrichedDetails = details.startsWith('[')
+      ? details.replace(/^\[([^\]]+)\]/, `[$1 | Performed By: ${performerName} (Phone: ${performerPhone}, Role: ${performerRole})]`)
+      : `[Performed By: ${performerName} (Phone: ${performerPhone}, Role: ${performerRole})] ${details}`;
 
     const rawIp =
       (req.headers["x-forwarded-for"] as string) ||
@@ -46,11 +69,11 @@ export async function logAudit(options: LogAuditOptions): Promise<void> {
       data: {
         action,
         tag,
-        details,
+        details: enrichedDetails,
         entityType: entityType || null,
         entityId: entityId !== undefined && entityId !== null ? String(entityId) : null,
-        performedById: Number(user.id),
-        performedByRole: user.role as Role,
+        performedById: userId,
+        performedByRole: performerRole as Role,
         ipAddress: ipAddress ? ipAddress.substring(0, 45) : null,
         userAgent: userAgent ? userAgent.substring(0, 255) : null,
       },

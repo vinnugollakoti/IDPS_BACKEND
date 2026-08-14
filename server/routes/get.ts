@@ -62,6 +62,7 @@ router.get("/get-exams", auth, async(req: AuthRequest, res: Response) => {
                                 id: true,
                                 name: true,
                                 admissionno: true,
+                                studentCode: true,
                                 classId: true,
                             }
                         }
@@ -154,6 +155,7 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
                         id: true,
                         name: true,
                         admissionno: true,
+                        studentCode: true,
                         gender: true,
                         dob: true,
                         adharnumber: true,

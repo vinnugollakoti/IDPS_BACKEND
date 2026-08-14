@@ -527,6 +527,7 @@ const importStudentRow = async (
                     classId,
                 },
             });
+            await tx.student.update({ where: { id: student.id }, data: { studentCode: `S-${String(student.id).padStart(3, '0')}` } });
 
             console.log("[student-import] student created", {
                 rowNumber: row.rowNumber,
@@ -798,11 +799,17 @@ router.post("/create-class-fee", auth, async(req: AuthRequest, res: Response) =>
             addedCount++;
         }
 
+        const classObj = await prisma.class.findUnique({
+            where: { id: Number(classId) },
+            select: { name: true, section: true }
+        });
+        const classNameStr = classObj ? `${classObj.name}-${classObj.section}` : `Class ID #${classId}`;
+
         void logAudit({
             req,
             action: "CREATE_CLASS_FEE",
             tag: "FEE",
-            details: `Bulk created ${type} fee of ₹${total} (${academicYear}) for Class ID #${classId} (${addedCount} student(s) assigned)`,
+            details: `[CLASS FEE APPLIED] Applied ${feeTypeEnum} fee structure "${feeTitle}" of ₹${Number(total).toLocaleString('en-IN')} (${academicYear}) to all ${addedCount} student(s) in ${classNameStr}. Total class fee increased by +₹${(Number(total) * addedCount).toLocaleString('en-IN')}.`,
             entityType: "Class",
             entityId: classId,
         });

@@ -226,6 +226,7 @@ router.post("/create-exam", auth, async(req: AuthRequest, res: Response) => {
 
         void serverCache.clear();
 
+        res.json({ message: "Exam created successfully", data: createdExams });
     } catch (err) {
         console.log(err);
         return res.status(400).json({ message: "Error in creating the exam" });

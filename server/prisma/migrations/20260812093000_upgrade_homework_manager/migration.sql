@@ -1,0 +1,8 @@
+ALTER TABLE "Homework"
+ADD COLUMN IF NOT EXISTS "attachments" JSONB NOT NULL DEFAULT '[]'::jsonb,
+ADD COLUMN IF NOT EXISTS "createdAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP,
+ADD COLUMN IF NOT EXISTS "updatedAt" TIMESTAMP(3) NOT NULL DEFAULT CURRENT_TIMESTAMP;
+
+CREATE INDEX IF NOT EXISTS "Homework_classId_idx" ON "Homework"("classId");
+CREATE INDEX IF NOT EXISTS "Homework_teacherId_idx" ON "Homework"("teacherId");
+CREATE INDEX IF NOT EXISTS "Homework_createdAt_idx" ON "Homework"("createdAt");
