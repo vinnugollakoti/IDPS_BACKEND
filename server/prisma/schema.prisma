@@ -46,6 +46,7 @@ model Student {
   id             Int             @id @default(autoincrement())
   photo          String?
   admissionno    String          @default("TEMP")
+  studentCode    String?         @unique
   name           String
   gender         Gender
   dob            DateTime?
@@ -167,6 +168,7 @@ model User {
   email     String    @unique
   role      Role
   gender    Gender
+  photoUrl  String?
   otp       String?
   otpExpiry DateTime?
 
@@ -179,7 +181,7 @@ model User {
   auditLogs         AuditLog[]
   expensesCreated   Expense[]
 
-  userPermissions   UserPermission[]
+  userPermissions UserPermission[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -189,7 +191,7 @@ model UserPermission {
   id        Int      @id @default(autoincrement())
   userId    Int
   user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
-  module    String   // e.g. "students", "fees", "circulars", "exams", "classes", "attendance", "timetable", "notifications", "permission"
+  module    String // e.g. "students", "fees", "circulars", "exams", "classes", "attendance", "timetable", "notifications", "permission"
   isAllowed Boolean  @default(true)
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -244,6 +246,13 @@ model Homework {
   subject     String
   description String
   dueDate     DateTime
+  attachments Json     @default("[]")
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+
+  @@index([classId])
+  @@index([teacherId])
+  @@index([createdAt])
 }
 
 model AttendanceSession {
@@ -254,8 +263,8 @@ model AttendanceSession {
 
   date DateTime
 
-  takenById Int
-  takenBy   Teacher @relation(fields: [takenById], references: [id])
+  takenById Int?
+  takenBy   Teacher? @relation(fields: [takenById], references: [id])
 
   createdAt DateTime @db.Date
 
@@ -313,7 +322,7 @@ model Exam {
   classId    Int
   class      Class    @relation(fields: [classId], references: [id])
 
-  isReleased Boolean  @default(false)
+  isReleased Boolean @default(false)
 
   marks Mark[]
 
@@ -367,8 +376,8 @@ model Fee {
   student   Student @relation(fields: [studentId], references: [id])
 
   title        String?
-  type         FeeType  @default(OTHER)
-  total        Decimal  @db.Decimal(10, 2)
+  type         FeeType @default(OTHER)
+  total        Decimal @db.Decimal(10, 2)
   academicYear String
 
   payments Payment[]
@@ -569,18 +578,18 @@ enum Qualification {
 }
 
 model AuditLog {
-  id             Int      @id @default(autoincrement())
-  action         String   // e.g. "CREATE_STUDENT", "UPDATE_STUDENT", "CREATE_FEE", "CREATE_PAYMENT", "DELETE_NOTICE"
-  tag            String   // Tag for easy filtering: "FEE", "STUDENT", "ATTENDANCE", "EXAM", "NOTICE", "AUTH"
-  details        String   // Human readable description
-  entityType     String?  // Target model name e.g. "Student", "Fee", "Payment"
-  entityId       String?  // Target record ID e.g. "42"
-  performedById  Int
-  performedBy    User     @relation(fields: [performedById], references: [id], onDelete: Cascade)
-  performedByRole Role    // PRINCIPAL, RECEPTIONIST, TEACHER, PARENT
-  ipAddress      String?
-  userAgent      String?
-  createdAt      DateTime @default(now())
+  id              Int      @id @default(autoincrement())
+  action          String // e.g. "CREATE_STUDENT", "UPDATE_STUDENT", "CREATE_FEE", "CREATE_PAYMENT", "DELETE_NOTICE"
+  tag             String // Tag for easy filtering: "FEE", "STUDENT", "ATTENDANCE", "EXAM", "NOTICE", "AUTH"
+  details         String // Human readable description
+  entityType      String? // Target model name e.g. "Student", "Fee", "Payment"
+  entityId        String? // Target record ID e.g. "42"
+  performedById   Int
+  performedBy     User     @relation(fields: [performedById], references: [id], onDelete: Cascade)
+  performedByRole Role // PRINCIPAL, RECEPTIONIST, TEACHER, PARENT
+  ipAddress       String?
+  userAgent       String?
+  createdAt       DateTime @default(now())
 
   @@index([performedById])
   @@index([tag])

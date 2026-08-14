@@ -6,6 +6,7 @@ import ClassRouter from "./routes/class"
 import StudentRouter from "./routes/student"
 import TeacherRouter from "./routes/teacher"
 import UserRouter from "./routes/user"
+import StudentAttendanceRouter from "./routes/studentAttendance"
 import GetRouter from "./routes/get"
 import NotificationsRouter from "./routes/notifications"
 import PermissionRouter from "./routes/permission"
@@ -45,7 +46,10 @@ const normalizeSupabaseUrl = () => {
 
 const checkDatabase = async (): Promise<ServiceHealth> => {
     try {
-        await prisma.$queryRaw`SELECT 1`;
+        const timeout = new Promise<never>((_, reject) => {
+            setTimeout(() => reject(new Error("Database health check timed out after 5 seconds")), 5000);
+        });
+        await Promise.race([prisma.$queryRaw`SELECT 1`, timeout]);
         return {
             status: "up",
             message: "Database connection is working"
@@ -191,8 +195,17 @@ const getHealthCheckResponse = async (_req: Request, res: Response) => {
 
 app.get("/health-check", getHealthCheckResponse);
 app.get("/health", getHealthCheckResponse);
+app.get("/health/database", async (_req: Request, res: Response) => {
+    const database = await checkDatabase();
+    return res.status(database.status === "up" ? 200 : 503).json({
+        status: database.status === "up" ? "healthy" : "unhealthy",
+        database,
+        timestamp: new Date().toISOString(),
+    });
+});
 
 app.use("/", UserRouter);
+app.use("/attendance", StudentAttendanceRouter);
 app.use("/auth", AuthRouter);
 app.use("/class", ClassRouter);
 app.use("/student", StudentRouter);
@@ -204,6 +217,16 @@ app.use("/homework", HomeworkRouter);
 app.use("/expenses", ExpensesRouter);
 
 
-app.listen(process.env.PORT, () => {
-    console.log("Your server is running 🏃‍♂️", process.env.PORT);
-})
+const port = Number(process.env.PORT ?? 3000);
+const server = app.listen(port, () => {
+    console.log(`Your server is running on port ${port}`);
+});
+
+server.on("error", (error: NodeJS.ErrnoException) => {
+    if (error.code === "EADDRINUSE") {
+        console.error(`Port ${port} is already in use. Stop the existing backend process before starting another one.`);
+    } else {
+        console.error("Backend server failed to start:", error);
+    }
+    process.exitCode = 1;
+});

@@ -7,6 +7,13 @@ type ParsedImage = {
   sizeBytes: number;
 };
 
+type ParsedDocument = {
+  buffer: Buffer;
+  mimeType: string;
+  extension: "jpg" | "png" | "webp" | "pdf";
+  sizeBytes: number;
+};
+
 type UploadImageInput = {
   imageBase64: string;
   imageMimeType?: string;
@@ -26,6 +33,7 @@ const SUPPORTED_MIME_TYPES: Record<string, ParsedImage["extension"]> = {
 
 const TEACHER_SELFIE_MAX_BYTES = Number(process.env.TEACHER_ATTENDANCE_MAX_IMAGE_BYTES ?? 5 * 1024 * 1024);
 const NOTIFICATION_IMAGE_MAX_BYTES = 15 * 1024 * 1024; // 15 MB
+const HOMEWORK_FILE_MAX_BYTES = 15 * 1024 * 1024;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 
@@ -116,6 +124,38 @@ const parseBase64Image = (
     extension,
     sizeBytes: buffer.length,
   };
+};
+
+const parseBase64Document = (value: unknown, mimeHint: unknown): ParsedDocument => {
+  if (typeof value !== "string" || !value.trim()) throw new Error("Homework attachment is empty");
+  const trimmed = value.trim();
+  const match = trimmed.match(/^data:([^;]+);base64,(.+)$/s);
+  let mimeType = (match?.[1] || (typeof mimeHint === "string" ? mimeHint : "application/octet-stream")).toLowerCase();
+  const payload = (match?.[2] || trimmed).replace(/\s/g, "");
+  const extensions: Record<string, ParsedDocument["extension"]> = { "image/jpeg": "jpg", "image/jpg": "jpg", "image/png": "png", "image/webp": "webp", "application/pdf": "pdf" };
+  if (mimeType === "image/jpg") mimeType = "image/jpeg";
+  const extension = extensions[mimeType];
+  if (!extension) throw new Error("Homework attachments must be JPG, PNG, WebP, or PDF files");
+  if (!/^[A-Za-z0-9+/]+=*$/.test(payload)) throw new Error("Homework attachment contains invalid data");
+  const buffer = Buffer.from(payload, "base64");
+  if (!buffer.length || buffer.length > HOMEWORK_FILE_MAX_BYTES) throw new Error("Each homework attachment must be 15 MB or smaller");
+  return { buffer, mimeType, extension, sizeBytes: buffer.length };
+};
+
+export const uploadHomeworkFile = async ({ imageBase64, imageMimeType, path }: UploadImageInput) => {
+  const url = process.env.SUPABASE_URL?.replace(/\/+$/, "");
+  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
+  const bucket = process.env.SUPABASE_HOMEWORK_BUCKET ?? "homework";
+  if (!url || !serviceRoleKey) throw new Error("Supabase storage is not configured");
+  const parsed = parseBase64Document(imageBase64, imageMimeType);
+  const objectPath = `${path}.${parsed.extension}`;
+  const response = await fetch(`${url}/storage/v1/object/${bucket}/${objectPath}`, {
+    method: "POST",
+    headers: { Authorization: `Bearer ${serviceRoleKey}`, apikey: serviceRoleKey, "Content-Type": parsed.mimeType, "Cache-Control": "31536000", "x-upsert": "false" },
+    body: parsed.buffer as unknown as BodyInit,
+  });
+  if (!response.ok) throw new Error(`Failed to upload homework attachment: ${await response.text().catch(() => response.statusText)}`);
+  return { name: objectPath.split("/").pop() || objectPath, url: `${url}/storage/v1/object/public/${bucket}/${objectPath}`, path: objectPath, mimeType: parsed.mimeType, sizeBytes: parsed.sizeBytes };
 };
 
 // ─── Legacy alias (used by teacher attendance) ─────────────────────────────────

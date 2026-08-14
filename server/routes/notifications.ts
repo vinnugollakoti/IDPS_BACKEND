@@ -272,4 +272,48 @@ router.get("/history", auth, async (req: AuthRequest, res: Response) => {
   }
 });
 
+// ─── 6. Notices inbox ────────────────────────────────────────────────────────
+// Notices are the school-wide inbox for messages delivered through Notify.
+router.post("/notices", auth, async (req: AuthRequest, res: Response) => {
+  try {
+    const title = typeof req.body?.title === "string" ? req.body.title.trim() : "";
+    const message = typeof req.body?.message === "string" ? req.body.message.trim() : "";
+    if (!title) return res.status(400).json({ message: "Notice title is required" });
+    if (!message) return res.status(400).json({ message: "Notice message is required" });
+
+    const notice = await prisma.notice.create({ data: { title, message } });
+    res.status(201).json({ message: "Notice saved", data: notice });
+  } catch (err: any) {
+    console.error("[Create Notice Error]:", err?.message);
+    res.status(500).json({ message: "Failed to save notice", error: err?.message });
+  }
+});
+
+router.get("/notices", auth, async (_req: AuthRequest, res: Response) => {
+  try {
+    const notices = await prisma.notice.findMany({
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+    const broadcasts = await prisma.broadcastNotification.findMany({
+      select: { title: true, body: true, imageUrl: true },
+      orderBy: { createdAt: "desc" },
+      take: 100,
+    });
+    const imageByMessage = new Map(
+      broadcasts
+        .filter((broadcast) => broadcast.imageUrl)
+        .map((broadcast) => [`${broadcast.title}\u0000${broadcast.body}`, broadcast.imageUrl])
+    );
+    const enriched = notices.map((notice) => ({
+      ...notice,
+      imageUrl: imageByMessage.get(`${notice.title}\u0000${notice.message}`) ?? null,
+    }));
+    res.json({ message: "Notices fetched", data: enriched });
+  } catch (err: any) {
+    console.error("[Notices Error]:", err?.message);
+    res.status(500).json({ message: "Failed to fetch notices", error: err?.message });
+  }
+});
+
 export default router;
