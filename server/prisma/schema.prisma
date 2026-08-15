@@ -180,11 +180,51 @@ model User {
   sentNotifications BroadcastNotification[]
   auditLogs         AuditLog[]
   expensesCreated   Expense[]
+  complaints       Complaint[]
 
   userPermissions UserPermission[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
+}
+
+model Complaint {
+  id          Int      @id @default(autoincrement())
+  mode        ComplaintMode @default(OPEN)
+  subject     String
+  description String
+  category    String?
+  priority    ComplaintPriority @default(NORMAL)
+  status      ComplaintStatus @default(OPEN)
+  studentName String?
+  studentCode String?
+  parentName  String?
+  parentPhone String?
+  response    String?
+  createdAt   DateTime @default(now())
+  updatedAt   DateTime @updatedAt
+  submittedById Int?
+  submittedBy User? @relation(fields: [submittedById], references: [id], onDelete: SetNull)
+
+  @@index([status])
+  @@index([createdAt])
+  @@index([submittedById])
+}
+
+enum ComplaintMode {
+  OPEN
+  ANONYMOUS
+}
+enum ComplaintPriority {
+  NORMAL
+  HIGH
+  URGENT
+}
+enum ComplaintStatus {
+  OPEN
+  IN_REVIEW
+  RESOLVED
+  CLOSED
 }
 
 model UserPermission {

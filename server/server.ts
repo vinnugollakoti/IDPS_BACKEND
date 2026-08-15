@@ -7,6 +7,7 @@ import StudentRouter from "./routes/student"
 import TeacherRouter from "./routes/teacher"
 import UserRouter from "./routes/user"
 import StudentAttendanceRouter from "./routes/studentAttendance"
+import ComplaintsRouter from "./routes/complaints"
 import GetRouter from "./routes/get"
 import NotificationsRouter from "./routes/notifications"
 import PermissionRouter from "./routes/permission"
@@ -206,6 +207,7 @@ app.get("/health/database", async (_req: Request, res: Response) => {
 
 app.use("/", UserRouter);
 app.use("/attendance", StudentAttendanceRouter);
+app.use("/complaints", ComplaintsRouter);
 app.use("/auth", AuthRouter);
 app.use("/class", ClassRouter);
 app.use("/student", StudentRouter);
