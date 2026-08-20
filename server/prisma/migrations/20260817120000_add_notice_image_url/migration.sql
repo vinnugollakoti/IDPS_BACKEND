@@ -1,0 +1,1 @@
+ALTER TABLE "Notice" ADD COLUMN IF NOT EXISTS "imageUrl" TEXT;
