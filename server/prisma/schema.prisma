@@ -276,6 +276,7 @@ model Notice {
   id        Int      @id @default(autoincrement())
   title     String
   message   String
+  imageUrl  String?
   createdAt DateTime @default(now())
 }
 
