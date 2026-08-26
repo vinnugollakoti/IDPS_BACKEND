@@ -1,6 +1,6 @@
 import express, { Request, Response } from "express";
 import prisma from "../prisma/client";
-import { AuthRequest, auth } from "../middleware/auth";
+import { AuthRequest, auth, isStaffRole } from "../middleware/auth";
 import { parseTeacherSelfie, uploadTeacherAttendanceSelfie } from "../lib/supabaseStorage";
 
 const router = express.Router();
@@ -223,7 +223,7 @@ router.get("/attendance/today", auth, async (req: AuthRequest, res: Response) =>
 
 router.get("/attendance", auth, async (req: AuthRequest, res: Response) => {
     try {
-        if (req.user?.role !== "TEACHER" && req.user?.role !== "PRINCIPAL" && req.user?.role !== "RECEPTIONIST") {
+        if (!isStaffRole(req.user?.role)) {
             return res.status(403).json({ message: "Unauthorized request" });
         }
 

@@ -337,15 +337,16 @@ router.get("/me", auth, async (req: AuthRequest, res: Response) => {
         parent: true,
         teacher: true
       }
-   })
+   });
 
    if (!user) {
       return res.status(404).json({ message: "User not found" });
    }
 
    const { otp: _uOtp, otpExpiry: _uExp, ...safeUser } = user;
-   res.json(safeUser)
-})
+   const phone = user.teacher?.phone || user.parent?.phone1 || undefined;
+   res.json({ message: "User profile fetched", data: { ...safeUser, phone }, user: { ...safeUser, phone } });
+});
 
 router.put("/me", auth, async (req: AuthRequest, res: Response) => {
   try {
@@ -355,14 +356,36 @@ router.put("/me", auth, async (req: AuthRequest, res: Response) => {
     const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
     const phone = typeof req.body?.phone === "string" ? req.body.phone.trim() : "";
     if (!name || !email) return res.status(400).json({ message: "Name and email are required" });
+    
     const existing = await prisma.user.findFirst({ where: { email, NOT: { id: userId } } });
     if (existing) return res.status(409).json({ message: "Another account already uses this email" });
-    const user = await prisma.user.update({ where: { id: userId }, data: { name, email }, include: { teacher: true } });
-    if (user.teacher && phone) await prisma.teacher.update({ where: { id: user.teacher.id }, data: { phone } });
-    const safeUser = { ...user, phone: phone || undefined };
+
+    const user = await prisma.user.update({ 
+      where: { id: userId }, 
+      data: { name, email }, 
+      include: { teacher: true, parent: true } 
+    });
+
+    if (user.teacher) {
+      await prisma.teacher.update({ 
+        where: { id: user.teacher.id }, 
+        data: { name, ...(phone ? { phone } : {}) } 
+      });
+    }
+
+    if (user.parent) {
+      await prisma.parent.update({ 
+        where: { id: user.parent.id }, 
+        data: { name, ...(phone ? { phone1: phone } : {}) } 
+      });
+    }
+
+    serverCache.clear();
+
+    const safeUser = { ...user, phone: phone || user.teacher?.phone || user.parent?.phone1 || undefined };
     delete (safeUser as any).otp;
     delete (safeUser as any).otpExpiry;
-    res.json({ message: "Profile updated", data: safeUser });
+    res.json({ message: "Profile updated successfully", data: safeUser, user: safeUser });
   } catch (err: any) {
     res.status(500).json({ message: "Failed to update profile", error: err?.message });
   }
@@ -380,6 +403,7 @@ router.delete("/me", auth, async (req: AuthRequest, res: Response) => {
       if (user.parent) await tx.parent.delete({ where: { id: user.parent.id } }).catch(() => {});
       await tx.user.delete({ where: { id: userId } });
     });
+    serverCache.clear();
     res.json({ message: "Account deleted" });
   } catch (err: any) {
     res.status(500).json({ message: "Failed to delete account", error: err?.message });
@@ -391,13 +415,24 @@ router.post("/me/photo", auth, async (req: AuthRequest, res: Response) => {
     const userId = resolveAuthUserId(req.user);
     const photoBase64 = typeof req.body?.photoBase64 === "string" ? req.body.photoBase64 : "";
     if (!userId || !photoBase64) return res.status(400).json({ message: "A profile image is required" });
-    const user = await prisma.user.findUnique({ where: { id: userId }, include: { teacher: true } });
-    if (!user || !["CHAIRMAN", "DIRECTOR", "PRINCIPAL", "TEACHER"].includes(user.role)) return res.status(403).json({ message: "Profile photo upload is not available for this account" });
-    const uploaded = await uploadUserProfilePhoto({ imageBase64: photoBase64, imageMimeType: req.body?.photoMimeType || "image/jpeg", path: `users/user_${userId}_${Date.now()}` });
+    const user = await prisma.user.findUnique({ where: { id: userId }, include: { teacher: true, parent: true } });
+    if (!user) return res.status(404).json({ message: "User not found" });
+    
+    const uploaded = await uploadUserProfilePhoto({ 
+      imageBase64: photoBase64, 
+      imageMimeType: req.body?.photoMimeType || "image/jpeg", 
+      path: `users/user_${userId}_${Date.now()}` 
+    });
+
     await prisma.user.update({ where: { id: userId }, data: { photoUrl: uploaded.imageUrl } });
     if (user.teacher) await prisma.teacher.update({ where: { id: user.teacher.id }, data: { photo: uploaded.imageUrl } });
-    res.json({ message: "Profile photo updated", data: { photoUrl: uploaded.imageUrl } });
-  } catch (error: any) { res.status(500).json({ message: "Failed to upload profile photo", error: error?.message }); }
+    
+    serverCache.clear();
+    res.json({ message: "Profile photo updated", data: { photoUrl: uploaded.imageUrl }, photoUrl: uploaded.imageUrl });
+  } catch (error: any) { 
+    console.error("[/me/photo error]:", error);
+    res.status(500).json({ message: "Failed to upload profile photo", error: error?.message }); 
+  }
 });
 
 

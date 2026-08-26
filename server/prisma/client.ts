@@ -13,7 +13,7 @@ if (!connectionString) {
 // Optimize pool to prevent holding excessive idle connections open on Supabase
 const pool = new Pool({
   connectionString,
-  max: 5,                  // Reduced connection cap to save Supabase DB RAM
+  max: 3,                  // Minimal pool for 512MB RAM — each conn holds ~5-10MB
   idleTimeoutMillis: 10000, // Close idle connections after 10s
   connectionTimeoutMillis: 5000,
   keepAlive: true,

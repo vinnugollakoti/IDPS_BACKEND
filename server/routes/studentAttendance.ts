@@ -5,8 +5,11 @@ import { AuthRequest, auth, isStaffRole } from "../middleware/auth";
 const router = express.Router();
 const dayStart = (value?: string) => {
   const date = value ? new Date(value) : new Date();
-  date.setUTCHours(0, 0, 0, 0);
-  return date;
+  // Use local midnight date string (YYYY-MM-DD) normalized to UTC midnight for consistent daily sessions
+  const year = date.getFullYear();
+  const month = date.getMonth();
+  const day = date.getDate();
+  return new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
 };
 const userId = (user: any) => Number(user?.userId ?? user?.id);
 
@@ -14,7 +17,7 @@ router.post("/batch-sync", auth, async (req: AuthRequest, res: Response) => {
   try {
     if (!isStaffRole(req.user.role)) return res.status(403).json({ message: "Only school staff can record attendance" });
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
-    if (!items.length) return res.json({ message: "Nothing to sync", data: { synced: 0 } });
+    if (!items.length) return res.json({ message: "Nothing to sync", data: { synced: 0, syncedCodes: [] } });
     const teacher = await prisma.teacher.findUnique({ where: { userId: userId(req.user) }, select: { id: true } });
     const codes: string[] = [...new Set<string>(items.map((item: any) => String(item?.studentCode || "").trim().toUpperCase()).filter(Boolean))];
     const students = await prisma.student.findMany({ where: { studentCode: { in: codes } }, select: { id: true, studentCode: true, classId: true } });
@@ -24,8 +27,8 @@ router.post("/batch-sync", auth, async (req: AuthRequest, res: Response) => {
       const code = String(item?.studentCode || "").trim().toUpperCase();
       const student = studentsByCode.get(code);
       if (!student) continue;
-      const classId = Number(item?.classId || student.classId);
-      if (classId !== student.classId) continue;
+      // Use student's assigned classId if item classId doesn't match or is missing
+      const classId = student.classId;
       const date = dayStart(item?.scannedAt);
       const key = `${classId}:${date.toISOString()}`;
       const group = grouped.get(key) || [];
@@ -34,10 +37,20 @@ router.post("/batch-sync", auth, async (req: AuthRequest, res: Response) => {
     }
     const syncedCodes: string[] = [];
     for (const group of grouped.values()) {
-      const session = await prisma.attendanceSession.upsert({ where: { classId_date: { classId: group[0].classId, date: group[0].date } }, update: {}, create: { classId: group[0].classId, date: group[0].date, takenById: teacher?.id ?? null, createdAt: group[0].date } });
-      await prisma.attendance.createMany({ data: group.map((entry) => ({ sessionId: session.id, studentId: entry.studentId, status: "PRESENT" as const })), skipDuplicates: true });
-      await prisma.attendance.updateMany({ where: { sessionId: session.id, studentId: { in: group.map((entry) => entry.studentId) } }, data: { status: "PRESENT" } });
-      syncedCodes.push(...group.map((entry) => entry.code));
+      const session = await prisma.attendanceSession.upsert({
+        where: { classId_date: { classId: group[0].classId, date: group[0].date } },
+        update: {},
+        create: { classId: group[0].classId, date: group[0].date, takenById: teacher?.id ?? null, createdAt: group[0].date }
+      });
+      
+      for (const entry of group) {
+        await prisma.attendance.upsert({
+          where: { sessionId_studentId: { sessionId: session.id, studentId: entry.studentId } },
+          update: { status: "PRESENT" },
+          create: { sessionId: session.id, studentId: entry.studentId, status: "PRESENT" }
+        });
+        syncedCodes.push(entry.code);
+      }
     }
     const synced = syncedCodes.length;
     res.json({ message: "Attendance synced", data: { synced, syncedCodes, rejectedCodes: codes.filter((code) => !syncedCodes.includes(code)) } });
