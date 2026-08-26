@@ -19,7 +19,10 @@ router.post("/login", async( req: Request, res: Response) => {
         })
 
         if (!user) {
-            return res.status(404).json({message: "User is not registered by the school."});
+            return res.status(404).json({
+                message: "Your account is not registered with IDPS. Please contact your school administration (Principal, Director, or Receptionist) to create your account before logging in.",
+                code: "USER_NOT_REGISTERED"
+            });
         }
 
         const otp = Math.floor(100000 + Math.random() * 900000).toString();

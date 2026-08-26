@@ -14,6 +14,7 @@ import PermissionRouter from "./routes/permission"
 import HomeworkRouter from "./routes/homework"
 import ExpensesRouter from "./routes/expenses"
 import prisma from "./prisma/client";
+import { serverCache } from "./utils/cache";
 dotenv.config();
 
 
@@ -26,8 +27,8 @@ app.use((_req, res, next) => {
     next();
 });
 app.use(cors());
-app.use(express.json({ limit: "50mb" }));
-app.use(express.urlencoded({ limit: "50mb", extended: true }));
+app.use(express.json({ limit: "5mb" }));
+app.use(express.urlencoded({ limit: "5mb", extended: true }));
 
 type ServiceHealth = {
     status: "up" | "down" | "configured" | "not_configured";
@@ -218,11 +219,38 @@ app.use("/permission", PermissionRouter);
 app.use("/homework", HomeworkRouter);
 app.use("/expenses", ExpensesRouter);
 
+// ─── Memory monitoring endpoint ───────────────────────────────────────────────
+app.get("/health/memory", (_req: Request, res: Response) => {
+    const mem = process.memoryUsage();
+    const toMB = (bytes: number) => (bytes / 1024 / 1024).toFixed(2);
+    const cacheStats = serverCache.stats();
+    return res.json({
+        heapUsedMB: toMB(mem.heapUsed),
+        heapTotalMB: toMB(mem.heapTotal),
+        rssMB: toMB(mem.rss),
+        externalMB: toMB(mem.external),
+        cache: cacheStats,
+        uptimeSeconds: Math.floor(process.uptime()),
+    });
+});
 
 const port = Number(process.env.PORT ?? 3000);
 const server = app.listen(port, () => {
     console.log(`Your server is running on port ${port}`);
 });
+
+// ─── OOM Prevention Watchdog ──────────────────────────────────────────────────
+// Every 30s, check if heap exceeds 320MB. If so, flush cache to reclaim RAM.
+const HEAP_DANGER_BYTES = 320 * 1024 * 1024;
+const memoryWatchdog = setInterval(() => {
+    const { heapUsed } = process.memoryUsage();
+    if (heapUsed > HEAP_DANGER_BYTES) {
+        console.warn(`[Memory Watchdog] Heap at ${(heapUsed / 1024 / 1024).toFixed(1)}MB — flushing cache`);
+        serverCache.clear();
+        if (global.gc) global.gc();
+    }
+}, 30000);
+memoryWatchdog.unref();
 
 server.on("error", (error: NodeJS.ErrnoException) => {
     if (error.code === "EADDRINUSE") {

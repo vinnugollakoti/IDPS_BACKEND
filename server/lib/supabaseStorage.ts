@@ -31,9 +31,9 @@ const SUPPORTED_MIME_TYPES: Record<string, ParsedImage["extension"]> = {
   "image/heif": "jpg",
 };
 
-const TEACHER_SELFIE_MAX_BYTES = Number(process.env.TEACHER_ATTENDANCE_MAX_IMAGE_BYTES ?? 5 * 1024 * 1024);
-const NOTIFICATION_IMAGE_MAX_BYTES = 15 * 1024 * 1024; // 15 MB
-const HOMEWORK_FILE_MAX_BYTES = 15 * 1024 * 1024;
+const TEACHER_SELFIE_MAX_BYTES = Number(process.env.TEACHER_ATTENDANCE_MAX_IMAGE_BYTES ?? 3 * 1024 * 1024);
+const NOTIFICATION_IMAGE_MAX_BYTES = 5 * 1024 * 1024; // 5 MB (was 15 MB)
+const HOMEWORK_FILE_MAX_BYTES = 5 * 1024 * 1024;
 
 // ─── Helpers ──────────────────────────────────────────────────────────────────
 

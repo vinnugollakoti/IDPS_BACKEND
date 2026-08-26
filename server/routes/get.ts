@@ -220,7 +220,7 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
             }
         })
 
-        serverCache.set(cacheKey, classes, 60);
+        serverCache.set(cacheKey, classes, 30);
         res.json({message: "Fetched classess successfully", data: classes})
     } catch(err) {
         console.log(err)
@@ -481,7 +481,7 @@ router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
             }
         });
 
-        serverCache.set(feeCacheKey, fees, 60);
+        serverCache.set(feeCacheKey, fees, 30);
         return res.json({message: "Fetched fees successfully", data: fees});
     } catch(err) {
         console.log(err)
@@ -568,7 +568,7 @@ router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
             }
         });
 
-        serverCache.set(studentCacheKey, students, 60);
+        serverCache.set(studentCacheKey, students, 30);
         return res.json({ message: "Fetched students successfully", data: students });
     } catch (err) {
         console.log(err);
