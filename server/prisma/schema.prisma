@@ -428,6 +428,7 @@ model Fee {
 
   @@index([studentId])
   @@index([type])
+  @@unique([studentId, type, academicYear])
 }
 
 model Payment {
@@ -508,6 +509,8 @@ enum FeeType {
   TUITION
   BUS
   EXAM
+  BOOKS_UNIFORM
+  REGISTRATION
   OTHER
 }
 
