@@ -3,6 +3,7 @@ import prisma from "../prisma/client";
 import { AuthRequest, auth, isExecutiveRole } from "../middleware/auth";
 import { logAudit } from "../utils/audit";
 import { serverCache } from "../utils/cache";
+import { matchStudentRecord } from "../utils/studentMatcher";
 const router = express.Router();
 
 const resolveAuthUserId = (user: any) => {
@@ -184,6 +185,30 @@ const parseFlexibleDate = (value?: string | null) => {
     const text = normalizeText(value);
     if (!text) return null;
 
+    const monthMap: Record<string, number> = {
+        jan: 1, feb: 2, mar: 3, apr: 4, may: 5, jun: 6,
+        jul: 7, aug: 8, sep: 9, sept: 9, oct: 10, nov: 11, dec: 12,
+        january: 1, february: 2, march: 3, april: 4, june: 6,
+        july: 7, august: 8, september: 9, october: 10, november: 11, december: 12
+    };
+
+    // 1. Text Month Format: '10-Mar-22', '7-May-23', '27-Oct-2022', '23-Feb-2023'
+    const textMonthMatch = text.match(/^(\d{1,2})[/\-. ]+([A-Za-z]+)[/\-. ]+(\d{2,4})$/);
+    if (textMonthMatch) {
+        const day = Number(textMonthMatch[1]);
+        const mStr = textMonthMatch[2].toLowerCase();
+        const month = monthMap[mStr];
+        let year = Number(textMonthMatch[3]);
+        if (year < 100) {
+            year += year > 50 ? 1900 : 2000;
+        }
+        if (month) {
+            const date = new Date(Date.UTC(year, month - 1, day));
+            return Number.isNaN(date.getTime()) ? null : date;
+        }
+    }
+
+    // 2. ISO Format: '2026-07-03'
     const isoMatch = text.match(/^(\d{4})-(\d{1,2})-(\d{1,2})(?:[ T].*)?$/);
     if (isoMatch) {
         const year = Number(isoMatch[1]);
@@ -193,7 +218,8 @@ const parseFlexibleDate = (value?: string | null) => {
         return Number.isNaN(date.getTime()) ? null : date;
     }
 
-    const slashMatch = text.match(/^(\d{1,2})[\/\-](\d{1,2})[\/\-](\d{2,4})$/);
+    // 3. Numeric DMY / MDY: '03-07-2026', '6/11/26', '5/7/23'
+    const slashMatch = text.match(/^(\d{1,2})[\/\-.](\d{1,2})[\/\-.](\d{2,4})$/);
     if (slashMatch) {
         const first = Number(slashMatch[1]);
         const second = Number(slashMatch[2]);
@@ -210,6 +236,19 @@ const parseFlexibleDate = (value?: string | null) => {
         }
         const date = new Date(Date.UTC(year, month - 1, day));
         return Number.isNaN(date.getTime()) ? null : date;
+    }
+
+    // 4. Excel serial numbers (e.g. '46109', '44047')
+    if (/^\d{4,5}$/.test(text)) {
+        const serial = Number(text);
+        if (serial >= 1000 && serial <= 80000) {
+            const utcDays = serial - (serial > 60 ? 25569 : 25568);
+            const utcMs = Math.round(utcDays * 86400 * 1000);
+            const date = new Date(utcMs);
+            if (!Number.isNaN(date.getTime())) {
+                return date;
+            }
+        }
     }
 
     const parsed = new Date(text);
@@ -356,14 +395,19 @@ const normalizeImportRow = (row: ImportStudentInput, classId: number, rowNumber:
     if (!gender) errors.push("Missing or invalid gender");
     if (!classId || Number.isNaN(classId)) errors.push("Missing classId");
 
-    const fatherName = normalizeText(row.parents?.father?.name ?? row.fatherName);
-    const motherName = normalizeText(row.parents?.mother?.name ?? row.motherName);
-    const sharedPhone = normalizeDigits(row.parents?.father?.phone ?? row.parents?.mother?.phone ?? row.mobileNumber);
-    const fatherPhone = normalizeDigits(row.parents?.father?.phone ?? row.mobileNumber);
-    const motherPhone = normalizeDigits(row.parents?.mother?.phone ?? row.mobileNumber);
+    const rawFatherName = normalizeText(row.parents?.father?.name ?? row.fatherName);
+    const rawMotherName = normalizeText(row.parents?.mother?.name ?? row.motherName);
+    
+    // Explicit Father phone vs Mother phone (no cross bleed)
+    const fatherPhone = normalizeDigits(row.parents?.father?.phone ?? (row as any).mobileFather ?? row.mobileNumber);
+    const motherPhone = normalizeDigits(row.parents?.mother?.phone ?? (row as any).mobileMother);
+    
     const fatherAadhar = normalizeDigits(row.parents?.father?.aadhar ?? row.fatherAadhar);
     const motherAadhar = normalizeDigits(row.parents?.mother?.aadhar ?? row.motherAadhar);
     const qualification = normalizeQualification(row.parents?.father?.qualification ?? row.parents?.mother?.qualification ?? row.qualification);
+
+    const fatherName = rawFatherName || (fatherPhone || fatherAadhar ? "Father" : "");
+    const motherName = rawMotherName || (motherPhone || motherAadhar ? "Mother" : "");
 
     return {
         rowNumber,
@@ -383,8 +427,8 @@ const normalizeImportRow = (row: ImportStudentInput, classId: number, rowNumber:
         parents: {
             father: fatherName || fatherPhone || fatherAadhar
                 ? {
-                      name: fatherName,
-                      phone: fatherPhone || sharedPhone || null,
+                      name: fatherName || "Father",
+                      phone: fatherPhone || null,
                       aadhar: fatherAadhar || null,
                       qualification: qualification ?? null,
                       relation: "Father",
@@ -392,8 +436,8 @@ const normalizeImportRow = (row: ImportStudentInput, classId: number, rowNumber:
                 : null,
             mother: motherName || motherPhone || motherAadhar
                 ? {
-                      name: motherName,
-                      phone: motherPhone || sharedPhone || null,
+                      name: motherName || "Mother",
+                      phone: motherPhone || null,
                       aadhar: motherAadhar || null,
                       qualification: qualification ?? null,
                       relation: "Mother",
@@ -443,15 +487,22 @@ const importStudentRow = async (
         });
 
         const rowResult = await prisma.$transaction(async (tx) => {
+            const identityChecks: any[] = [
+                { classId, admissionno: row.admissionno },
+            ];
+            if (row.adharnumber) {
+                // Aadhaar identifies the student across class/section changes;
+                // do not create a second profile when a student is re-uploaded.
+                identityChecks.push({ adharnumber: row.adharnumber });
+            }
             const duplicate = await tx.student.findFirst({
-                where: {
-                    classId,
-                    admissionno: row.admissionno,
-                },
+                where: { OR: identityChecks },
+                select: { id: true, name: true, admissionno: true, class: { select: { name: true, section: true } } },
             });
 
             if (duplicate) {
-                throw new Error("Student with the same admission number already exists in this class");
+                const classLabel = duplicate.class ? `${duplicate.class.name} - ${duplicate.class.section}` : "another class";
+                throw new Error(`Student already exists in the database: ${duplicate.name} (${classLabel}, ID ${duplicate.id}). Review the existing record instead of uploading a duplicate.`);
             }
 
             const parentInputs: Array<{ relation: "Father" | "Mother" | "Guardian"; payload: ImportParentInput | null | undefined }> = [
@@ -688,14 +739,511 @@ router.post("/bulk-import-students", auth, async (req: AuthRequest, res: Respons
     }
 });
 
-function parseFeeType(rawType: any): "TUITION" | "BUS" | "EXAM" | "OTHER" {
+router.post("/bulk-ingest-portal", async (req: Request, res: Response) => {
+    try {
+        const classId = Number(req.body.classId);
+        const rows = Array.isArray(req.body.rows) ? (req.body.rows as ImportStudentInput[]) : [];
+
+        if (!Number.isFinite(classId) || classId <= 0) {
+            return res.status(400).json({ message: "Valid classId is required" });
+        }
+
+        if (!rows.length) {
+            return res.status(400).json({ message: "No rows received for import" });
+        }
+
+        const classExists = await prisma.class.findUnique({
+            where: { id: classId },
+            select: { id: true, name: true, section: true },
+        });
+
+        if (!classExists) {
+            return res.status(404).json({ message: "Class not found for the provided classId" });
+        }
+
+        const normalizedRows = rows.map((row, index) => normalizeImportRow(row, classId, Number(row.rowNumber ?? index + 1)));
+        const summary: ImportBatchResult = {
+            createdStudents: 0,
+            createdParents: 0,
+            createdMothers: 0,
+            createdFathers: 0,
+            linkedParents: 0,
+            linkedRelations: 0,
+            reusedParents: 0,
+            skippedRows: 0,
+            failedRows: [],
+            createdStudentIds: [],
+        };
+        const stepTrace: ImportStepTrace[] = [];
+
+        for (const row of normalizedRows) {
+            const rowResult = await importStudentRow(row, classId);
+            summary.createdStudents += rowResult.createdStudents;
+            summary.createdParents += rowResult.createdParents;
+            summary.createdMothers += rowResult.createdMothers;
+            summary.createdFathers += rowResult.createdFathers;
+            summary.linkedParents += rowResult.linkedParents;
+            summary.linkedRelations += rowResult.linkedRelations;
+            summary.reusedParents += rowResult.reusedParents;
+            summary.skippedRows += rowResult.skippedRows;
+            summary.failedRows.push(...rowResult.failedRows);
+            summary.createdStudentIds.push(...rowResult.createdStudentIds);
+
+            for (const failedRow of rowResult.failedRows) {
+                stepTrace.push({
+                    rowNumber: failedRow.rowNumber,
+                    admissionno: failedRow.admissionno ?? null,
+                    name: failedRow.name ?? null,
+                    step: (failedRow.step as ImportStepTrace["step"]) ?? "transaction",
+                    message: failedRow.errors.join(" | "),
+                });
+            }
+        }
+
+        void serverCache.clear();
+
+        return res.json({
+            message: "Import completed",
+            data: {
+                classId,
+                className: `${classExists.name}-${classExists.section}`,
+                ...summary,
+                stepTrace,
+            },
+        });
+    } catch (err: any) {
+        console.error("Bulk ingest portal error:", err);
+        return res.status(500).json({ message: "Failed to import student data", error: err?.message });
+    }
+});
+
+router.get("/qr-export-list", async (req: Request, res: Response) => {
+    try {
+        const students = await prisma.student.findMany({
+            select: {
+                id: true,
+                name: true,
+                studentCode: true,
+                admissionno: true,
+                adharnumber: true,
+                classId: true,
+                class: {
+                    select: {
+                        id: true,
+                        name: true,
+                        section: true,
+                    },
+                },
+            },
+            orderBy: [
+                { class: { name: 'asc' } },
+                { class: { section: 'asc' } },
+                { name: 'asc' },
+            ],
+        });
+
+        return res.json({
+            message: "Fetched students for QR export",
+            data: students,
+        });
+    } catch (err: any) {
+        console.error("Error fetching students for QR export:", err);
+        return res.status(500).json({ message: "Failed to fetch students for QR export", error: err?.message });
+    }
+});
+
+router.get("/fee/students-for-matching", async (req: Request, res: Response) => {
+    try {
+        const classId = req.query.classId ? Number(req.query.classId) : undefined;
+        const where: any = {};
+        if (classId && Number.isInteger(classId) && classId > 0) {
+            where.classId = classId;
+        }
+
+        const students = await prisma.student.findMany({
+            where,
+            select: {
+                id: true,
+                name: true,
+                studentCode: true,
+                admissionno: true,
+                adharnumber: true,
+                gender: true,
+                dob: true,
+                classId: true,
+                address: true,
+                class: {
+                    select: {
+                        id: true,
+                        name: true,
+                        section: true,
+                    },
+                },
+                parents: {
+                    select: {
+                        parent: {
+                            select: {
+                                id: true,
+                                name: true,
+                                relation: true,
+                                phone1: true,
+                                phone2: true,
+                            },
+                        },
+                    },
+                },
+                feeDetails: {
+                    select: {
+                        id: true,
+                        type: true,
+                        title: true,
+                        total: true,
+                        academicYear: true,
+                        payments: {
+                            select: {
+                                id: true,
+                                amount: true,
+                                method: true,
+                                status: true,
+                                screenshot: true,
+                                createdAt: true,
+                            },
+                        },
+                    },
+                },
+            },
+            orderBy: [
+                { classId: "asc" },
+                { name: "asc" },
+            ],
+        });
+
+        return res.json({ message: "Fetched students for fee matching", data: students });
+    } catch (err: any) {
+        console.error("Error fetching students for fee matching:", err);
+        return res.status(500).json({ message: "Failed to fetch students for fee matching", error: err?.message });
+    }
+});
+
+router.post("/fee/bulk-ingest-portal", async (req: Request, res: Response) => {
+    try {
+        const academicYear = typeof req.body.academicYear === "string" && req.body.academicYear.trim()
+            ? req.body.academicYear.trim()
+            : "2026-2027";
+        const targetClassId = req.body.classId ? Number(req.body.classId) : null;
+        const items = Array.isArray(req.body.items) ? req.body.items : [];
+
+        if (!items.length) {
+            return res.status(400).json({ message: "No fee items provided for ingestion" });
+        }
+
+        const candidateStudents = await prisma.student.findMany({
+            where: targetClassId ? { classId: targetClassId } : {},
+            select: {
+                id: true,
+                name: true,
+                admissionno: true,
+                classId: true,
+                address: true,
+                parents: {
+                    select: {
+                        parent: {
+                            select: {
+                                id: true,
+                                name: true,
+                                relation: true,
+                                phone1: true,
+                                phone2: true,
+                            },
+                        },
+                    },
+                },
+            },
+        });
+
+        const results = {
+            academicYear,
+            totalAttempted: items.length,
+            matchedCount: 0,
+            unmatchedCount: 0,
+            feesUpserted: 0,
+            paymentsRecorded: 0,
+            matchedRecords: [] as any[],
+            unmatchedRecords: [] as any[],
+        };
+
+        for (let i = 0; i < items.length; i++) {
+            const item = items[i];
+                let matchedStudent: any = null;
+                let matchMethod = "MANUAL";
+                let confidence = 1.0;
+
+                if (item.studentId && Number.isInteger(Number(item.studentId))) {
+                    matchedStudent = candidateStudents.find((s) => s.id === Number(item.studentId)) || null;
+                }
+
+                if (!matchedStudent) {
+                    const matchRes = matchStudentRecord(
+                        item.studentName || item.excelStudentName,
+                        item.parentContact || item.excelParentPhone,
+                        candidateStudents as any
+                    );
+                    if (matchRes.student) {
+                        matchedStudent = matchRes.student;
+                        matchMethod = matchRes.method;
+                        confidence = matchRes.confidence;
+                    }
+                }
+
+                if (!matchedStudent) {
+                    results.unmatchedCount++;
+                    results.unmatchedRecords.push({
+                        rowNumber: i + 1,
+                        excelStudentName: item.studentName || item.excelStudentName,
+                        excelParentPhone: item.parentContact || item.excelParentPhone,
+                        reason: "No matching student record found in database for the selected class/school.",
+                    });
+                    continue;
+                }
+
+            results.matchedCount++;
+            const studentId = matchedStudent.id;
+            const receiptStr = item.receiptNo ? String(item.receiptNo).trim() : "";
+            const feesProcessed: string[] = [];
+
+            try {
+                await prisma.$transaction(async (tx) => {
+                    const syncPayment = async (feeId: number, amount: number, noteLabel: string, receipt?: string) => {
+                    if (!amount || amount <= 0) return;
+                    const screenshotNote = receipt ? `${noteLabel} | Receipt: ${receipt}` : noteLabel;
+
+                    const existingPayments = await tx.payment.findMany({
+                        where: { feeId },
+                    });
+
+                    const existingMatch = existingPayments.find(
+                        (p) => p.screenshot && p.screenshot.includes(noteLabel)
+                    );
+
+                    if (existingMatch) {
+                        if (Number(existingMatch.amount) !== amount) {
+                            await tx.payment.update({
+                                where: { id: existingMatch.id },
+                                data: { amount, screenshot: screenshotNote },
+                            });
+                        }
+                    } else {
+                        await tx.payment.create({
+                            data: {
+                                feeId,
+                                amount,
+                                method: "CASH",
+                                status: "SUCCESS",
+                                screenshot: screenshotNote,
+                                verifiedAt: new Date(),
+                            },
+                        });
+                        results.paymentsRecorded++;
+                    }
+                };
+
+                // A. TUITION FEE
+                const tuitionTotal = Number(item.tuitionFee) || 0;
+                const t1 = Number(item.term1TuitionPaid) || 0;
+                const t2 = Number(item.term2TuitionPaid) || 0;
+                const t3 = Number(item.term3TuitionPaid) || 0;
+
+                if (tuitionTotal > 0 || (t1 + t2 + t3) > 0) {
+                    const finalTuitionTotal = tuitionTotal > 0 ? tuitionTotal : (t1 + t2 + t3);
+                    const feeRecord = await tx.fee.upsert({
+                        where: {
+                            studentId_type_academicYear: {
+                                studentId,
+                                type: "TUITION",
+                                academicYear,
+                            },
+                        },
+                        update: {
+                            title: "Tuition Fee",
+                            total: finalTuitionTotal,
+                        },
+                        create: {
+                            studentId,
+                            type: "TUITION",
+                            academicYear,
+                            title: "Tuition Fee",
+                            total: finalTuitionTotal,
+                        },
+                    });
+                    results.feesUpserted++;
+                    feesProcessed.push(`TUITION (₹${finalTuitionTotal})`);
+
+                    if (t1 > 0) await syncPayment(feeRecord.id, t1, "Tuition Term 1", receiptStr);
+                    if (t2 > 0) await syncPayment(feeRecord.id, t2, "Tuition Term 2", receiptStr);
+                    if (t3 > 0) await syncPayment(feeRecord.id, t3, "Tuition Term 3", receiptStr);
+                }
+
+                // B. BUS / TRANSPORT FEE
+                const transFee = Number(item.transportFee) || 0;
+                const transT1 = Number(item.transportTerm1Paid) || 0;
+                const transT2 = Number(item.transportTerm2Paid) || 0;
+                const place = item.place || item.transportPlace || "";
+
+                if (transFee > 0 || (transT1 + transT2) > 0) {
+                    const finalTransTotal = transFee > 0 ? transFee : (transT1 + transT2);
+                    const feeRecord = await tx.fee.upsert({
+                        where: {
+                            studentId_type_academicYear: {
+                                studentId,
+                                type: "BUS",
+                                academicYear,
+                            },
+                        },
+                        update: {
+                            title: "Transport Fee",
+                            total: finalTransTotal,
+                        },
+                        create: {
+                            studentId,
+                            type: "BUS",
+                            academicYear,
+                            title: "Transport Fee",
+                            total: finalTransTotal,
+                        },
+                    });
+                    results.feesUpserted++;
+                    feesProcessed.push(`BUS (₹${finalTransTotal})`);
+
+                    const routeNote = place ? `Route: ${place}` : "";
+                    if (transT1 > 0) await syncPayment(feeRecord.id, transT1, `Transport Term 1${routeNote ? " | " + routeNote : ""}`, receiptStr);
+                    if (transT2 > 0) await syncPayment(feeRecord.id, transT2, `Transport Term 2${routeNote ? " | " + routeNote : ""}`, receiptStr);
+                }
+
+                // C. BOOKS & UNIFORM FEE
+                const booksFee = Number(item.booksFee) || 0;
+                const booksPaid = Number(item.booksPaid) || 0;
+                const extraUniform = Number(item.extraUniform) || 0;
+
+                if (booksFee > 0 || booksPaid > 0 || extraUniform > 0) {
+                    const finalBooksTotal = (booksFee || 0) + (extraUniform || 0);
+                    const feeRecord = await tx.fee.upsert({
+                        where: {
+                            studentId_type_academicYear: {
+                                studentId,
+                                type: "BOOKS_UNIFORM",
+                                academicYear,
+                            },
+                        },
+                        update: {
+                            title: "Books & Uniform",
+                            total: finalBooksTotal,
+                        },
+                        create: {
+                            studentId,
+                            type: "BOOKS_UNIFORM",
+                            academicYear,
+                            title: "Books & Uniform",
+                            total: finalBooksTotal,
+                        },
+                    });
+                    results.feesUpserted++;
+                    feesProcessed.push(`BOOKS_UNIFORM (₹${finalBooksTotal})`);
+
+                    if (booksPaid > 0) {
+                        const extraNote = extraUniform > 0 ? ` | Extra: ₹${extraUniform}` : "";
+                        await syncPayment(feeRecord.id, booksPaid, `Books & Uniform${extraNote}`, receiptStr);
+                    }
+                }
+
+                // D. REGISTRATION FEE
+                const regPaid = Number(item.regFeePaid) || 0;
+                if (regPaid > 0) {
+                    const feeRecord = await tx.fee.upsert({
+                        where: {
+                            studentId_type_academicYear: {
+                                studentId,
+                                type: "REGISTRATION",
+                                academicYear,
+                            },
+                        },
+                        update: {
+                            title: "Admission & Registration Fee",
+                            total: regPaid,
+                        },
+                        create: {
+                            studentId,
+                            type: "REGISTRATION",
+                            academicYear,
+                            title: "Admission & Registration Fee",
+                            total: regPaid,
+                        },
+                    });
+                    results.feesUpserted++;
+                    feesProcessed.push(`REGISTRATION (₹${regPaid})`);
+
+                    await syncPayment(feeRecord.id, regPaid, "Admission & Registration Fee", receiptStr);
+                }
+
+                // Update student address if missing and place is provided
+                if (place && (!matchedStudent.address || matchedStudent.address.trim() === "")) {
+                    await tx.student.update({
+                        where: { id: studentId },
+                        data: { address: place },
+                    });
+                }
+
+                }, { maxWait: 10000, timeout: 15000 });
+
+                results.matchedRecords.push({
+                    studentId,
+                    studentName: matchedStudent.name,
+                    admissionno: matchedStudent.admissionno,
+                    matchMethod,
+                    confidence,
+                    feesProcessed,
+                });
+            } catch (studentErr: any) {
+                console.error(`Error processing fees for student ${matchedStudent.name}:`, studentErr);
+                results.unmatchedRecords.push({
+                    rowNumber: i + 1,
+                    excelStudentName: matchedStudent.name,
+                    excelParentPhone: item.parentContact || item.excelParentPhone,
+                    reason: studentErr?.message || "Failed to update student fee in database",
+                });
+            }
+        }
+
+        void serverCache.clear();
+
+        return res.json({
+            message: "Fee ingestion completed successfully",
+            data: results,
+        });
+    } catch (err: any) {
+        console.error("Bulk fee ingest error:", err);
+        return res.status(500).json({ message: "Failed to ingest fee data", error: err?.message });
+    }
+});
+
+function parseFeeType(rawType: any): "TUITION" | "BUS" | "EXAM" | "BOOKS_UNIFORM" | "REGISTRATION" | "OTHER" {
     if (!rawType) return "OTHER";
     const str = String(rawType).toUpperCase().trim();
     if (str === "TUITION" || str.includes("TUITION") || str.includes("ACADEMIC")) return "TUITION";
     if (str === "BUS" || str.includes("BUS") || str.includes("TRANSPORT")) return "BUS";
     if (str === "EXAM" || str.includes("EXAM") || str.includes("TEST")) return "EXAM";
+    if (str === "BOOKS_UNIFORM" || str.includes("BOOK") || str.includes("UNIFORM")) return "BOOKS_UNIFORM";
+    if (str === "REGISTRATION" || str.includes("REG") || str.includes("ADMISSION")) return "REGISTRATION";
     return "OTHER";
 }
+
+const parsePositiveMoney = (value: unknown): number | null => {
+    if (typeof value === "string" && !/^\d+(?:\.\d{1,2})?$/.test(value.trim())) return null;
+    const amount = Number(value);
+    return Number.isFinite(amount) && amount > 0 && amount <= 1000000000 ? Math.round(amount * 100) / 100 : null;
+};
+
+const validAcademicYear = (value: unknown): value is string =>
+    typeof value === "string" && /^\d{4}-\d{4}$/.test(value.trim());
 
 router.post("/create-fee", auth, async(req: AuthRequest, res: Response) => {
     try {
@@ -705,8 +1253,13 @@ router.post("/create-fee", auth, async(req: AuthRequest, res: Response) => {
 
         const {studentId, type, title, total, academicYear} = req.body;
 
-        if (!studentId || !type || !total || !academicYear) {
-            return res.status(400).json({message: "Missing required fields"});
+        const parsedStudentId = Number(studentId);
+        const parsedTotal = parsePositiveMoney(total);
+        if (!Number.isInteger(parsedStudentId) || parsedStudentId <= 0 || !type || parsedTotal === null || !validAcademicYear(academicYear)) {
+            return res.status(400).json({message: "Student, fee type, a positive amount (up to 2 decimals), and a valid academic year are required."});
+        }
+        if (!(await prisma.student.findUnique({ where: { id: parsedStudentId }, select: { id: true } }))) {
+            return res.status(404).json({ message: "Student record not found." });
         }
 
         const feeTitle = title || type;
@@ -715,11 +1268,11 @@ router.post("/create-fee", auth, async(req: AuthRequest, res: Response) => {
         const result = await prisma.$transaction(async(tx) => {
             const fee = await tx.fee.create({
                 data: {
-                    studentId: Number(studentId),
+                    studentId: parsedStudentId,
                     title: feeTitle,
                     type: feeTypeEnum,
-                    total: Number(total),
-                    academicYear
+                    total: parsedTotal,
+                    academicYear: academicYear.trim()
                 },
 
                 include: {
@@ -757,6 +1310,7 @@ router.post("/create-fee", auth, async(req: AuthRequest, res: Response) => {
 
     } catch (error: any) {
         console.error("Error creating fee:", error);
+        if (error?.code === "P2002") return res.status(409).json({ message: "A fee with this type already exists for this student and academic year." });
         return res.status(500).json({message: error?.message || "Error creating Fee bill"});
     }
 });
@@ -769,15 +1323,20 @@ router.post("/create-class-fee", auth, async(req: AuthRequest, res: Response) =>
 
         const { classId, type, title, total, academicYear } = req.body;
 
-        if (!classId || !type || !total || !academicYear) {
-            return res.status(400).json({ message: "Missing required fields" });
+        const parsedClassId = Number(classId);
+        const parsedTotal = parsePositiveMoney(total);
+        if (!Number.isInteger(parsedClassId) || parsedClassId <= 0 || !type || parsedTotal === null || !validAcademicYear(academicYear)) {
+            return res.status(400).json({ message: "Class, fee type, a positive amount (up to 2 decimals), and a valid academic year are required." });
+        }
+        if (!(await prisma.class.findUnique({ where: { id: parsedClassId }, select: { id: true } }))) {
+            return res.status(404).json({ message: "Class record not found." });
         }
 
         const feeTitle = title || type;
         const feeTypeEnum = parseFeeType(type);
 
         const students = await prisma.student.findMany({
-            where: { classId: Number(classId) }
+            where: { classId: parsedClassId }
         });
 
         if (students.length === 0) {
@@ -785,19 +1344,22 @@ router.post("/create-class-fee", auth, async(req: AuthRequest, res: Response) =>
         }
 
         let addedCount = 0;
+        let skippedCount = 0;
 
-        for (const student of students) {
-            await prisma.fee.create({
-                data: {
-                    studentId: student.id,
-                    title: feeTitle,
-                    type: feeTypeEnum,
-                    total: Number(total),
-                    academicYear
+        await prisma.$transaction(async (tx) => {
+            for (const student of students) {
+                const existing = await tx.fee.findUnique({
+                    where: { studentId_type_academicYear: { studentId: student.id, type: feeTypeEnum, academicYear: academicYear.trim() } },
+                    select: { id: true },
+                });
+                if (existing) {
+                    skippedCount++;
+                    continue;
                 }
-            });
-            addedCount++;
-        }
+                await tx.fee.create({ data: { studentId: student.id, title: feeTitle, type: feeTypeEnum, total: parsedTotal, academicYear: academicYear.trim() } });
+                addedCount++;
+            }
+        });
 
         const classObj = await prisma.class.findUnique({
             where: { id: Number(classId) },
@@ -811,15 +1373,16 @@ router.post("/create-class-fee", auth, async(req: AuthRequest, res: Response) =>
             tag: "FEE",
             details: `[CLASS FEE APPLIED] Applied ${feeTypeEnum} fee structure "${feeTitle}" of ₹${Number(total).toLocaleString('en-IN')} (${academicYear}) to all ${addedCount} student(s) in ${classNameStr}. Total class fee increased by +₹${(Number(total) * addedCount).toLocaleString('en-IN')}.`,
             entityType: "Class",
-            entityId: classId,
+            entityId: parsedClassId,
         });
 
         serverCache.invalidate("get-fees");
         serverCache.invalidate("get-students");
 
         return res.json({
-            message: `Successfully applied ${type} fee to ${addedCount} student(s) in class.`,
-            addedCount
+            message: `Applied ${type} fee to ${addedCount} student(s).${skippedCount ? ` ${skippedCount} existing fee(s) were left unchanged.` : ""}`,
+            addedCount,
+            skippedCount
         });
     } catch (err) {
         console.log(err);
@@ -841,25 +1404,15 @@ router.post("/create-payment", auth, async(req: AuthRequest, res: Response) => {
         const { feeId, feeStructureId, amount, method, status, screenshot, customReason, applyToCategory } = req.body;
         let targetFeeId = feeId || feeStructureId;
 
-        if (!targetFeeId && req.body.studentId) {
-            let existingFee = await prisma.fee.findFirst({
-                where: { studentId: Number(req.body.studentId) }
-            });
-            if (!existingFee) {
-                existingFee = await prisma.fee.create({
-                    data: {
-                        studentId: Number(req.body.studentId),
-                        type: "OTHER",
-                        total: Number(amount) || 0,
-                        academicYear: "2026-2027"
-                    }
-                });
-            }
-            targetFeeId = existingFee.id;
+        const parsedAmount = parsePositiveMoney(amount);
+        const parsedFeeId = Number(targetFeeId);
+        const normalizedMethod = String(method || "CASH").toUpperCase();
+        const normalizedStatus = String(status || "SUCCESS").toUpperCase();
+        if (!Number.isInteger(parsedFeeId) || parsedFeeId <= 0 || parsedAmount === null) {
+            return res.status(400).json({ message: "A valid fee and a positive payment amount with at most 2 decimals are required." });
         }
-
-        if (!targetFeeId || !amount) {
-            return res.status(400).json({ message: "Missing required fields: feeId and amount are required." });
+        if (!["CASH", "ONLINE"].includes(normalizedMethod) || !["PENDING", "SUCCESS", "REJECTED"].includes(normalizedStatus)) {
+            return res.status(400).json({ message: "Invalid payment method or status." });
         }
 
         let noteParts: string[] = [];
@@ -874,20 +1427,23 @@ router.post("/create-payment", auth, async(req: AuthRequest, res: Response) => {
         }
         const noteText = noteParts.length > 0 ? noteParts.join(' | ') : undefined;
 
-        const payment = await prisma.payment.create({
-            data: {
-                feeId: Number(targetFeeId),
-                amount: Number(amount),
-                method: method ? method.toUpperCase() : "CASH",
-                status: status || "SUCCESS",
-                screenshot: noteText,
-                verifiedById: authUserId,
-                verifiedAt: new Date()
-            },
-            include: {
-                fee: true,
-                verifiedBy: true,
+        const payment = await prisma.$transaction(async (tx) => {
+            // Serialize payments for the same fee so two simultaneous requests
+            // cannot both observe the same remaining balance and over-collect.
+            await tx.$queryRaw`SELECT "id" FROM "Fee" WHERE "id" = ${parsedFeeId} FOR UPDATE`;
+            const fee = await tx.fee.findUnique({ where: { id: parsedFeeId }, include: { payments: { select: { amount: true, status: true } } } });
+            if (!fee) throw Object.assign(new Error("Fee record not found."), { statusCode: 404 });
+            if (normalizedStatus === "SUCCESS") {
+                const paid = fee.payments.filter((item) => item.status === "SUCCESS").reduce((sum, item) => sum + Number(item.amount), 0);
+                const remaining = Math.max(0, Number(fee.total) - paid);
+                if (parsedAmount > remaining + 0.005) {
+                    throw Object.assign(new Error(`Payment exceeds the remaining balance of ₹${remaining.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.`), { statusCode: 422 });
+                }
             }
+            return tx.payment.create({
+                data: { feeId: parsedFeeId, amount: parsedAmount, method: normalizedMethod as any, status: normalizedStatus as any, screenshot: noteText, verifiedById: authUserId, verifiedAt: new Date() },
+                include: { fee: true, verifiedBy: true },
+            });
         });
 
         const feeWithStudent = await prisma.fee.findUnique({
@@ -913,7 +1469,8 @@ router.post("/create-payment", auth, async(req: AuthRequest, res: Response) => {
 
     } catch(err) {
         console.log(err)
-        return res.status(403).json({message: "Error creating payment details, Contact developer"})
+        const statusCode = Number((err as any)?.statusCode) || 500;
+        return res.status(statusCode).json({message: (err as any)?.message || "Error creating payment details"})
     }
 })
 
@@ -927,8 +1484,15 @@ router.put("/update-fee/:id", auth, async(req: AuthRequest, res: Response) => {
         }
 
         const {type, total, academicYear} = req.body;
+        const parsedTotal = parsePositiveMoney(total);
+        if (!type || parsedTotal === null || !validAcademicYear(academicYear)) {
+            return res.status(400).json({message: "Fee type, a positive amount with at most 2 decimals, and a valid academic year are required."});
+        }
 
         const feeId = Number(req.params.id);
+        if (!Number.isInteger(feeId) || feeId <= 0) {
+            return res.status(400).json({message: "Invalid fee id"});
+        }
 
         const fee_ = await prisma.fee.findUnique({
             where: {id: feeId}
@@ -938,11 +1502,19 @@ router.put("/update-fee/:id", auth, async(req: AuthRequest, res: Response) => {
             return res.status(404).json({message: "Fee data not existed, Contact developer"});
         }
 
+        const paidForFee = await prisma.payment.aggregate({
+            where: { feeId, status: "SUCCESS" },
+            _sum: { amount: true },
+        });
+        if (parsedTotal + 0.005 < Number(paidForFee._sum.amount || 0)) {
+            return res.status(422).json({ message: "Fee total cannot be lower than payments already recorded for this fee." });
+        }
+
         const duplicate = await prisma.fee.findFirst({
             where: {
                 studentId: fee_.studentId,
-                type,
-                academicYear,
+                type: parseFeeType(type),
+                academicYear: academicYear.trim(),
                 NOT: { id: feeId }
             }
         });
@@ -956,9 +1528,9 @@ router.put("/update-fee/:id", auth, async(req: AuthRequest, res: Response) => {
         const updatedFee = await prisma.fee.update({
             where: {id: feeId},
             data: {
-                type,
-                total,
-                academicYear
+                type: parseFeeType(type),
+                total: parsedTotal,
+                academicYear: academicYear.trim(),
             },
             include: {
                 student: true
@@ -1001,8 +1573,12 @@ router.put("/update-payment/:id", auth, async(req: AuthRequest, res: Response) =
         }
 
         const {feeId, amount, method, status, screenshot} = req.body;
+        const parsedAmount = parsePositiveMoney(amount);
 
         const paymentId = Number(req.params.id);
+        if (!Number.isInteger(paymentId) || paymentId <= 0) {
+            return res.status(400).json({message: "Invalid payment id"});
+        }
 
         const payment_ = await prisma.payment.findUnique({
             where : {id: paymentId}
@@ -1011,14 +1587,33 @@ router.put("/update-payment/:id", auth, async(req: AuthRequest, res: Response) =
         if (!payment_) {
             return res.status(404).json({message: "Payment data not existed, Contact developer"});
         }
+        const normalizedMethod = String(method || payment_.method || "CASH").toUpperCase();
+        const normalizedStatus = String(status || payment_.status || "SUCCESS").toUpperCase();
+        if (parsedAmount === null || !["CASH", "ONLINE"].includes(normalizedMethod) || !["PENDING", "SUCCESS", "REJECTED"].includes(normalizedStatus)) {
+            return res.status(400).json({ message: "Invalid payment amount, method, or status." });
+        }
+
+        const targetFeeId = feeId === undefined || feeId === null ? payment_.feeId : Number(feeId);
+        if (!Number.isInteger(targetFeeId) || targetFeeId <= 0 || targetFeeId !== payment_.feeId) {
+            return res.status(400).json({ message: "A payment cannot be moved to another fee record." });
+        }
+        if (normalizedStatus === "SUCCESS") {
+            const fee = await prisma.fee.findUnique({ where: { id: payment_.feeId }, include: { payments: { select: { id: true, amount: true, status: true } } } });
+            if (!fee) return res.status(404).json({ message: "Fee record not found." });
+            const paidExcludingCurrent = fee.payments.filter((item) => item.id !== paymentId && item.status === "SUCCESS").reduce((sum, item) => sum + Number(item.amount), 0);
+            const remaining = Math.max(0, Number(fee.total) - paidExcludingCurrent);
+            if (parsedAmount > remaining + 0.005) {
+                return res.status(422).json({ message: `Payment exceeds the remaining balance of ₹${remaining.toLocaleString("en-IN", { minimumFractionDigits: 2, maximumFractionDigits: 2 })}.` });
+            }
+        }
 
         const updatedPayment = await prisma.payment.update({
             where: {id: paymentId},
             data: {
-                feeId,
-                amount:  Number(amount),
-                method,
-                status,
+                feeId: targetFeeId,
+                amount: parsedAmount,
+                method: normalizedMethod as any,
+                status: normalizedStatus as any,
                 screenshot,
                 verifiedById: authUserId
             },
@@ -1098,9 +1693,7 @@ router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res:
                 class: {
                     include: {
                         teacher: {
-                            include: {
-                                user: true
-                            }
+                            include: { user: { select: { id: true, name: true, email: true, gender: true, photoUrl: true } } }
                         }
                     }
                 },
@@ -1109,7 +1702,7 @@ router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res:
                     include: {
                         parent: {
                             include: {
-                                user: true
+                                user: { select: { id: true, name: true, email: true, gender: true, photoUrl: true } }
                             }
                         }
                     }
@@ -1118,9 +1711,17 @@ router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res:
                     include: {
                         payments: {
                             include: {
-                                verifiedBy: true
+                                verifiedBy: { select: { id: true, name: true, email: true, role: true } }
                             }
                         }
+                    }
+                },
+
+                attendances: {
+                    orderBy: { createdAt: "desc" },
+                    take: 120,
+                    include: {
+                        session: { select: { id: true, date: true, classId: true } }
                     }
                 },
 

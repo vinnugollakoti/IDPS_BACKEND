@@ -18,16 +18,22 @@ router.post("/create-class", auth, async(req: AuthRequest, res: Response) => {
         }
 
         const {name, section, teacherId} = req.body;
+        const className = typeof name === 'string' ? name.trim() : '';
+        const sectionName = typeof section === 'string' ? section.trim() : '';
+        const primaryTeacherId = teacherId === undefined || teacherId === null || teacherId === '' ? null : Number(teacherId);
 
-        if (!name || !section || !teacherId) {
-            return res.status(500).json({message : "Missing required fields"});
+        if (!className || !sectionName) {
+            return res.status(400).json({message : "Class name and section name are required"});
+        }
+        if (primaryTeacherId !== null && (!Number.isInteger(primaryTeacherId) || primaryTeacherId <= 0)) {
+            return res.status(400).json({message: "Invalid teacher ID"});
         }
 
         const existingClass = await prisma.class.findUnique({
             where: {
                 name_section: {
-                name,
-                section
+                name: className,
+                section: sectionName
                 }
             }
         });
@@ -40,9 +46,9 @@ router.post("/create-class", auth, async(req: AuthRequest, res: Response) => {
 
             const teacher = await tx.class.create({
                 data: {
-                    name,
-                    section,
-                    teacherId
+                    name: className,
+                    section: sectionName,
+                    teacherId: primaryTeacherId
                 }
             })
 
@@ -58,7 +64,7 @@ router.post("/create-class", auth, async(req: AuthRequest, res: Response) => {
             req,
             action: "CREATE_CLASS",
             tag: "CLASS",
-            details: `Created Class ${name} ${section}`,
+            details: `Created Class ${className} ${sectionName}`,
             entityType: "Class",
             entityId: result.id,
         });
@@ -388,14 +394,22 @@ router.put("/update-class/:id", auth, async(req: AuthRequest, res: Response) => 
         }
 
         let targetTeacherIds: number[] = [];
-        if (Array.isArray(teacherIds) && teacherIds.length > 0) {
+        const hasTeacherList = Array.isArray(teacherIds);
+        if (hasTeacherList && teacherIds.length > 0) {
             targetTeacherIds = teacherIds.map((id: any) => Number(id)).filter(Number.isFinite);
-        } else if (teacherId !== undefined && teacherId !== null) {
+        } else if (!hasTeacherList && teacherId !== undefined && teacherId !== null) {
             const primaryId = Number(teacherId);
             if (Number.isFinite(primaryId)) targetTeacherIds = [primaryId];
         }
 
-        const primaryTeacherId = targetTeacherIds.length > 0 ? targetTeacherIds[0] : (teacherId !== undefined ? Number(teacherId) : isclassexisted.teacherId);
+        const primaryTeacherId = hasTeacherList
+            ? (targetTeacherIds[0] ?? null)
+            : (targetTeacherIds.length > 0 ? targetTeacherIds[0] : (teacherId !== undefined ? Number(teacherId) : isclassexisted.teacherId));
+        const nextName = typeof name === 'string' ? name.trim() : isclassexisted.name;
+        const nextSection = typeof section === 'string' ? section.trim() : isclassexisted.section;
+        if (!nextName || !nextSection) {
+            return res.status(400).json({message: "Class name and section name are required"});
+        }
 
         const updatedClass = await prisma.$transaction(async (tx) => {
             // Delete existing teacher assignments for this class
@@ -416,8 +430,8 @@ router.put("/update-class/:id", auth, async(req: AuthRequest, res: Response) => 
             return tx.class.update({
                 where: { id: classId },
                 data: {
-                    name: name !== undefined ? name : isclassexisted.name,
-                    section: section !== undefined ? section : isclassexisted.section,
+                    name: nextName,
+                    section: nextSection,
                     teacherId: primaryTeacherId
                 },
                 include: {
@@ -716,5 +730,63 @@ router.put("/update-exam/:id", auth, async (req: AuthRequest, res: Response) => 
     }
 })
 
+router.get("/list-all", async (_req: Request, res: Response) => {
+    try {
+        const classes = await prisma.class.findMany({
+            select: {
+                id: true,
+                name: true,
+                section: true,
+                teacherId: true,
+            },
+            orderBy: [
+                { name: "asc" },
+                { section: "asc" }
+            ]
+        });
+        return res.json({ message: "Fetched all classes", data: classes });
+    } catch (err: any) {
+        console.error("Error fetching all classes:", err);
+        return res.status(500).json({ message: "Failed to fetch classes", error: err?.message });
+    }
+});
+
+router.post("/create-quick", async (req: Request, res: Response) => {
+    try {
+        const { name, section } = req.body;
+        const className = typeof name === "string" ? name.trim().toUpperCase() : "";
+        const sectionName = typeof section === "string" ? section.trim().toUpperCase() : "";
+
+        if (!className || !sectionName) {
+            return res.status(400).json({ message: "Class name and section are required" });
+        }
+
+        const existing = await prisma.class.findUnique({
+            where: {
+                name_section: {
+                    name: className,
+                    section: sectionName
+                }
+            }
+        });
+
+        if (existing) {
+            return res.json({ message: "Class already exists", data: existing });
+        }
+
+        const created = await prisma.class.create({
+            data: {
+                name: className,
+                section: sectionName,
+            }
+        });
+
+        void serverCache.clear();
+        return res.json({ message: "Class created successfully", data: created });
+    } catch (err: any) {
+        console.error("Error creating quick class:", err);
+        return res.status(500).json({ message: "Failed to create class", error: err?.message });
+    }
+});
 
 export default router;

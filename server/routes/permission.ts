@@ -16,7 +16,7 @@ router.get("/staff", auth, async (req: AuthRequest, res: Response) => {
     const staffUsers = await prisma.user.findMany({
       where: {
         role: {
-          in: ["PRINCIPAL", "RECEPTIONIST", "TEACHER"],
+          in: ["PRINCIPAL", "DIRECTOR", "CHAIRMAN", "RECEPTIONIST", "TEACHER"],
         },
       },
       select: {
@@ -54,6 +54,9 @@ router.get("/staff", auth, async (req: AuthRequest, res: Response) => {
       if (user.role === "PRINCIPAL") {
         department = "Executive Admin";
         badge = "Super Admin";
+      } else if (user.role === "DIRECTOR" || user.role === "CHAIRMAN") {
+        department = "Executive Leadership";
+        badge = "Full Access";
       } else if (user.role === "RECEPTIONIST") {
         department = "Front Desk & Lobby";
         badge = "Lobby Access";
@@ -71,7 +74,7 @@ router.get("/staff", auth, async (req: AuthRequest, res: Response) => {
           .map((p) => p.module);
       } else {
         // Fallback default permissions by role
-        if (user.role === "PRINCIPAL") {
+        if (user.role === "PRINCIPAL" || user.role === "DIRECTOR" || user.role === "CHAIRMAN") {
           allowedModules = [
             "students",
             "fees",
@@ -81,6 +84,13 @@ router.get("/staff", auth, async (req: AuthRequest, res: Response) => {
             "attendance",
             "timetable",
             "notifications",
+            "permission",
+            "homework",
+            "whatsapp",
+            "spending",
+            "complaints",
+            "downloads",
+            "profile",
           ];
         } else if (user.role === "RECEPTIONIST") {
           allowedModules = ["students", "attendance"];
