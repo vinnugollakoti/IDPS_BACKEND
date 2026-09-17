@@ -335,7 +335,10 @@ router.get("/me", auth, async (req: AuthRequest, res: Response) => {
       where: { id: authUserId },
       include: {
         parent: true,
-        teacher: true
+        teacher: true,
+        userPermissions: {
+          select: { module: true, isAllowed: true }
+        }
       }
    });
 
@@ -345,7 +348,11 @@ router.get("/me", auth, async (req: AuthRequest, res: Response) => {
 
    const { otp: _uOtp, otpExpiry: _uExp, ...safeUser } = user;
    const phone = user.teacher?.phone || user.parent?.phone1 || undefined;
-   res.json({ message: "User profile fetched", data: { ...safeUser, phone }, user: { ...safeUser, phone } });
+   const allowedModules = user.userPermissions.length
+      ? user.userPermissions.filter((item) => item.isAllowed).map((item) => item.module)
+      : undefined;
+   const profile = { ...safeUser, phone, photoUrl: user.photoUrl || user.teacher?.photo || undefined, allowedModules };
+   res.json({ message: "User profile fetched", data: profile, user: profile });
 });
 
 router.put("/me", auth, async (req: AuthRequest, res: Response) => {
