@@ -739,7 +739,10 @@ router.post("/bulk-import-students", auth, async (req: AuthRequest, res: Respons
     }
 });
 
-router.post("/bulk-ingest-portal", async (req: Request, res: Response) => {
+router.post("/bulk-ingest-portal", auth, async (req: AuthRequest, res: Response) => {
+    if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
+        return res.status(403).json({ message: "Only school administrators can import students" });
+    }
     try {
         const classId = Number(req.body.classId);
         const rows = Array.isArray(req.body.rows) ? (req.body.rows as ImportStudentInput[]) : [];
@@ -817,7 +820,10 @@ router.post("/bulk-ingest-portal", async (req: Request, res: Response) => {
     }
 });
 
-router.get("/qr-export-list", async (req: Request, res: Response) => {
+router.get("/qr-export-list", auth, async (req: AuthRequest, res: Response) => {
+    if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
+        return res.status(403).json({ message: "Only school administrators can export student QRs" });
+    }
     try {
         const students = await prisma.student.findMany({
             select: {
@@ -852,7 +858,10 @@ router.get("/qr-export-list", async (req: Request, res: Response) => {
     }
 });
 
-router.get("/fee/students-for-matching", async (req: Request, res: Response) => {
+router.get("/fee/students-for-matching", auth, async (req: AuthRequest, res: Response) => {
+    if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
+        return res.status(403).json({ message: "Only school administrators can access fee matching data" });
+    }
     try {
         const classId = req.query.classId ? Number(req.query.classId) : undefined;
         const where: any = {};
@@ -925,7 +934,10 @@ router.get("/fee/students-for-matching", async (req: Request, res: Response) => 
     }
 });
 
-router.post("/fee/bulk-ingest-portal", async (req: Request, res: Response) => {
+router.post("/fee/bulk-ingest-portal", auth, async (req: AuthRequest, res: Response) => {
+    if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
+        return res.status(403).json({ message: "Only school administrators can import fees" });
+    }
     try {
         const academicYear = typeof req.body.academicYear === "string" && req.body.academicYear.trim()
             ? req.body.academicYear.trim()
