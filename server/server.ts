@@ -15,6 +15,7 @@ import HomeworkRouter from "./routes/homework"
 import ExpensesRouter from "./routes/expenses"
 import prisma from "./prisma/client";
 import { serverCache } from "./utils/cache";
+import { AuthRequest, auth, isExecutiveRole } from "./middleware/auth";
 dotenv.config();
 
 
@@ -220,7 +221,10 @@ app.use("/homework", HomeworkRouter);
 app.use("/expenses", ExpensesRouter);
 
 // ─── Memory monitoring endpoint ───────────────────────────────────────────────
-app.get("/health/memory", (_req: Request, res: Response) => {
+app.get("/health/memory", auth, (req: AuthRequest, res: Response) => {
+    if (!isExecutiveRole(req.user?.role)) {
+        return res.status(403).json({ message: "Only executive users can access memory diagnostics" });
+    }
     const mem = process.memoryUsage();
     const toMB = (bytes: number) => (bytes / 1024 / 1024).toFixed(2);
     const cacheStats = serverCache.stats();

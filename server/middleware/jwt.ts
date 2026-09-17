@@ -3,23 +3,26 @@ import dotenv from "dotenv";
 
 dotenv.config();
 
-const FALLBACK_JWT_SECRET = "e3b2157febfc1cee8d71ab4e20d1a17474cc875d6f6517d0e20d274c5068d886";
-const JWT_SECRET: string = (process.env.JWT_SECRET && process.env.JWT_SECRET.length >= 32)
-  ? process.env.JWT_SECRET
-  : FALLBACK_JWT_SECRET;
+const JWT_SECRET = process.env.JWT_SECRET ?? "";
+const JWT_ISSUER = process.env.JWT_ISSUER || "idps-backend";
+const JWT_AUDIENCE = process.env.JWT_AUDIENCE || "idps-staff-app";
 
-if (!process.env.JWT_SECRET || process.env.JWT_SECRET.length < 32) {
-  console.warn('[SECURITY WARNING] JWT_SECRET is not configured or shorter than 32 characters in environment variables. Using fallback secret.');
+if (!JWT_SECRET || JWT_SECRET.length < 32) {
+  throw new Error("JWT_SECRET must be configured with at least 32 characters; refusing to start without a production secret");
 }
 
 export function generateToken(userId: number, role: string) {
   return jwt.sign(
-    { userId, role },
+    { userId, role, tokenVersion: 1 },
     JWT_SECRET,
-    { expiresIn: "240d" }
+    { expiresIn: "240d", issuer: JWT_ISSUER, audience: JWT_AUDIENCE, subject: String(userId) }
   );
 }
 
 export function verifyToken(token: string) {
-  return jwt.verify(token, JWT_SECRET);
+  return jwt.verify(token, JWT_SECRET, {
+    algorithms: ["HS256"],
+    issuer: JWT_ISSUER,
+    audience: JWT_AUDIENCE,
+  });
 }

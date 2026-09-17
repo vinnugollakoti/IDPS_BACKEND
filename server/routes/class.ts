@@ -730,7 +730,10 @@ router.put("/update-exam/:id", auth, async (req: AuthRequest, res: Response) => 
     }
 })
 
-router.get("/list-all", async (_req: Request, res: Response) => {
+router.get("/list-all", auth, async (req: AuthRequest, res: Response) => {
+    if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
+        return res.status(403).json({ message: "Only school administrators can list all classes" });
+    }
     try {
         const classes = await prisma.class.findMany({
             select: {
@@ -751,7 +754,10 @@ router.get("/list-all", async (_req: Request, res: Response) => {
     }
 });
 
-router.post("/create-quick", async (req: Request, res: Response) => {
+router.post("/create-quick", auth, async (req: AuthRequest, res: Response) => {
+    if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
+        return res.status(403).json({ message: "Only school administrators can create classes" });
+    }
     try {
         const { name, section } = req.body;
         const className = typeof name === "string" ? name.trim().toUpperCase() : "";

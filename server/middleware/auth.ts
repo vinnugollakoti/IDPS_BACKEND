@@ -14,10 +14,16 @@ export function auth(req: AuthRequest, res: Response, next: NextFunction) {
     return res.status(401).json({ message: "No token" });
   }
 
-  const token = header.split(" ")[1];
+  const [scheme, token, ...extra] = header.trim().split(/\s+/);
+  if (scheme !== "Bearer" || !token || extra.length > 0) {
+    return res.status(401).json({ message: "Authorization header must use Bearer token format" });
+  }
 
   try {
-    const decoded = verifyToken(token);
+    const decoded = verifyToken(token) as any;
+    if (!decoded || typeof decoded !== "object" || !Number.isInteger(Number(decoded.userId)) || !decoded.role || decoded.tokenVersion !== 1) {
+      return res.status(401).json({ message: "Invalid token payload" });
+    }
     req.user = decoded;
     next();
   } catch {

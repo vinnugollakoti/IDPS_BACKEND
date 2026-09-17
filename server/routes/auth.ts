@@ -1,4 +1,5 @@
 import express, {Request, Response} from "express";
+import { randomInt } from "node:crypto";
 import prisma from "../prisma/client";
 import { AuthRequest, auth } from "../middleware/auth";
 import {sendMOtpail} from "../mailer/mail"
@@ -8,7 +9,7 @@ const router = express.Router();
 router.post("/login", async( req: Request, res: Response) => {
     try {
 
-        const {email} = req.body;
+        const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
 
         if (!email) {
             return res.status(400).json({message: "Email required"});
@@ -25,7 +26,7 @@ router.post("/login", async( req: Request, res: Response) => {
             });
         }
 
-        const otp = Math.floor(100000 + Math.random() * 900000).toString();
+        const otp = randomInt(100000, 1000000).toString();
         const otpExpiry = new Date(Date.now() + 5 * 60 * 1000);
 
         await prisma.user.update({
@@ -36,7 +37,7 @@ router.post("/login", async( req: Request, res: Response) => {
             }
         });
 
-        sendMOtpail(email, otp);
+        await sendMOtpail(email, otp);
 
         res.json({ message: "OTP Sent, valid for 5 minutes" });
     } catch (err) {
@@ -47,7 +48,8 @@ router.post("/login", async( req: Request, res: Response) => {
 
 router.post("/otp-verify", async(req: Request, res: Response) => {
     try {
-        const {email, otp} = req.body;
+        const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+        const otp = typeof req.body?.otp === "string" ? req.body.otp.trim() : "";
         
         const user = await prisma.user.findUnique({
             where: {email},
