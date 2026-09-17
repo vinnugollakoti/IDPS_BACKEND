@@ -26,7 +26,12 @@ router.get("/get-exams", auth, async(req: AuthRequest, res: Response) => {
             });
             if (!teacher) return res.json({message: "Fetched Exams", data: []});
             const teacherClasses = await prisma.class.findMany({
-                where: { teacherId: teacher.id },
+                where: {
+                    OR: [
+                        { teacherId: teacher.id },
+                        { teachers: { some: { teacherId: teacher.id } } }
+                    ]
+                },
                 select: { id: true }
             });
             classIds = teacherClasses.map((c) => c.id);
@@ -150,47 +155,9 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
                         }
                     }
                 },
-                students: {
-                    select: {
-                        id: true,
-                        name: true,
-                        admissionno: true,
-                        studentCode: true,
-                        gender: true,
-                        dob: true,
-                        adharnumber: true,
-                        pincode: true,
-                        mothertongue: true,
-                        socialcategory: true,
-                        bloodgroup: true,
-                        admissiondate: true,
-                        height: true,
-                        weight: true,
-                        address: true,
-                        parents: {
-                            select: {
-                                parent: {
-                                    select: {
-                                        id: true,
-                                        name: true,
-                                        relation: true,
-                                        type: true,
-                                        phone1: true,
-                                        phone2: true,
-                                        adharnumber: true,
-                                        qualification: true,
-                                        user: {
-                                            select: {
-                                                email: true,
-                                                gender: true,
-                                            }
-                                        }
-                                    }
-                                }
-                            }
-                        }
-                    }
-                },
+                // Student records are loaded by /get-students. Keeping the
+                // class response lightweight avoids returning every student
+                // (and parent relation) twice on app startup.
                 timetable: {
                     include: {
                         teacher: {
@@ -416,12 +383,10 @@ router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
 
         const authUserId = resolveAuthUserId(req.user);
 
-        let where: {
-            student?: {
-                class?: { teacherId?: number };
-                parents?: { some?: { parentId?: number } };
-            }
-        } = {};
+        // The relation filter also supports ClassTeacher assignments. Keep
+        // this typed as an input object because Prisma's generated relation
+        // type is not exported consistently across client versions.
+        let where: any = {};
 
         if (req.user.role === "TEACHER") {
             const teacher = await prisma.teacher.findUnique({
@@ -432,7 +397,10 @@ router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
             where = {
                 student: {
                     class: {
-                        teacherId: teacher.id
+                        OR: [
+                            { teacherId: teacher.id },
+                            { teachers: { some: { teacherId: teacher.id } } }
+                        ]
                     }
                 }
             };
@@ -460,11 +428,6 @@ router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
                 student: {
                     include: {
                         class: true,
-                        parents: {
-                            include: {
-                                parent: true
-                            }
-                        }
                     }
                 },
                 payments: {
@@ -544,8 +507,13 @@ router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
             where,
             include: {
                 class: {
-                    include: {
-                        teacher: true
+                    select: {
+                        id: true,
+                        name: true,
+                        section: true,
+                        teacher: {
+                            select: { id: true, name: true, phone: true, gender: true }
+                        }
                     }
                 },
                 parents: {

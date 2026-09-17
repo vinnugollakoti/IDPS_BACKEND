@@ -53,7 +53,10 @@ router.post("/otp-verify", async(req: Request, res: Response) => {
             where: {email},
             include: {
                 parent: true,
-                teacher: true
+                teacher: true,
+                userPermissions: {
+                    select: { module: true, isAllowed: true }
+                }
             }
         })
 
@@ -78,7 +81,10 @@ router.post("/otp-verify", async(req: Request, res: Response) => {
         })
 
         const { otp: _uOtp, otpExpiry: _uExp, ...safeUser } = user;
-        res.json({message: "Logged in Successfully", token, user: safeUser}) 
+        const allowedModules = user.userPermissions.length
+            ? user.userPermissions.filter((item) => item.isAllowed).map((item) => item.module)
+            : undefined;
+        res.json({message: "Logged in Successfully", token, user: { ...safeUser, photoUrl: user.photoUrl || user.teacher?.photo || undefined, allowedModules }}) 
 
     } catch(err) {
         console.log(err)

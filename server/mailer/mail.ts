@@ -58,7 +58,7 @@ function buildOtpEmailHtml(otp: string): string {
   const digitBoxes = digits
     .map(
       (d) =>
-        `<td style="width:44px;height:52px;background-color:#f0fdf4;border:2px solid #bbf7d0;border-radius:10px;text-align:center;vertical-align:middle;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:28px;font-weight:700;color:#166534;letter-spacing:0;">${d}</td>`
+        `<td style="width:46px;height:52px;background-color:#ffffff;border:2px solid #16a34a;border-radius:8px;text-align:center;vertical-align:middle;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;font-size:26px;font-weight:700;color:#15803d;letter-spacing:0;">${d}</td>`
     )
     .join(`<td style="width:8px;"></td>`);
 
@@ -69,55 +69,57 @@ function buildOtpEmailHtml(otp: string): string {
   <meta name="viewport" content="width=device-width, initial-scale=1.0" />
   <meta name="color-scheme" content="light" />
   <meta name="supported-color-schemes" content="light" />
-  <title>IDPS Login OTP</title>
+  <title>IDPS Login Code</title>
 </head>
-<body style="margin:0;padding:0;background-color:#f1f5f9;font-family:'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
+<body style="margin:0;padding:0;background-color:#ffffff;font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,Helvetica,Arial,sans-serif;-webkit-text-size-adjust:100%;-ms-text-size-adjust:100%;">
   <!--
     The OTP code for autofill / notification copy:
     Your IDPS verification code is ${otp}
   -->
-  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color:#f1f5f9;">
+  <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="background-color:#ffffff;">
     <tr>
-      <td align="center" style="padding:32px 16px;">
-        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:480px;background-color:#ffffff;border-radius:16px;overflow:hidden;box-shadow:0 4px 24px rgba(0,0,0,0.06);">
-
+      <td align="center" style="padding:40px 16px;">
+        <!-- Clean Card Container -->
+        <table role="presentation" cellpadding="0" cellspacing="0" width="100%" style="max-width:440px;background-color:#ffffff;border:1px solid #e5e7eb;border-top:4px solid #16a34a;border-radius:12px;overflow:hidden;">
+          
           <!-- Header -->
           <tr>
-            <td style="background: linear-gradient(135deg, #004b23 0%, #006400 50%, #38b000 100%);padding:32px 24px 28px;text-align:center;">
-              <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
+            <td style="padding:32px 28px 0;text-align:center;">
+              <table role="presentation" cellpadding="0" cellspacing="0" align="center">
                 <tr>
                   <td align="center">
-                    <div style="width:56px;height:56px;background-color:rgba(255,255,255,0.2);border-radius:50%;display:inline-block;line-height:56px;text-align:center;">
-                      <span style="font-size:28px;color:#ffffff;">🔐</span>
-                    </div>
+                    <span style="display:inline-block;padding:4px 14px;background-color:#f0fdf4;border:1px solid #bbf7d0;border-radius:20px;font-size:12px;font-weight:800;color:#15803d;letter-spacing:1px;">
+                      IDPS
+                    </span>
                   </td>
                 </tr>
                 <tr>
-                  <td align="center" style="padding-top:16px;">
-                    <h1 style="margin:0;font-size:22px;font-weight:700;color:#ffffff;letter-spacing:0.5px;">Verify Your Identity</h1>
+                  <td align="center" style="padding-top:12px;">
+                    <h1 style="margin:0;font-size:20px;font-weight:700;color:#0f172a;letter-spacing:-0.3px;">
+                      Login Verification Code
+                    </h1>
                   </td>
                 </tr>
                 <tr>
-                  <td align="center" style="padding-top:6px;">
-                    <p style="margin:0;font-size:14px;color:rgba(255,255,255,0.85);font-weight:400;">IDPS Teacher Portal — One-Time Password</p>
+                  <td align="center" style="padding-top:4px;">
+                    <p style="margin:0;font-size:13px;color:#64748b;">
+                      International Delhi Public School
+                    </p>
                   </td>
                 </tr>
               </table>
             </td>
           </tr>
 
-          <!-- Body -->
+          <!-- Body Content -->
           <tr>
-            <td style="padding:32px 24px 24px;">
-              <p style="margin:0 0 6px;font-size:15px;color:#475569;line-height:1.6;text-align:center;">
-                Use the code below to complete your login.
-              </p>
-              <p style="margin:0 0 24px;font-size:13px;color:#94a3b8;text-align:center;">
-                This code expires in <strong style="color:#475569;">5 minutes</strong>.
+            <td style="padding:24px 28px 20px;text-align:center;">
+              <p style="margin:0 0 20px;font-size:14px;color:#475569;line-height:1.5;">
+                Use the following code to sign in to your account. This code is valid for <strong>5 minutes</strong>.
               </p>
 
-              <!-- OTP Digits -->
-              <table role="presentation" cellpadding="0" cellspacing="0" align="center">
+              <!-- OTP Code Digits -->
+              <table role="presentation" cellpadding="0" cellspacing="0" align="center" style="margin:0 auto;">
                 <tr>
                   ${digitBoxes}
                 </tr>
@@ -129,45 +131,26 @@ function buildOtpEmailHtml(otp: string): string {
                 Your IDPS verification code is ${otp}
               </div>
 
-              <!-- Copy hint -->
-              <p style="margin:20px 0 0;font-size:12px;color:#94a3b8;text-align:center;">
-                On your phone? Tap the code from the notification to copy it.
+              <!-- Security notice -->
+              <p style="margin:24px 0 0;font-size:12px;color:#94a3b8;line-height:1.5;">
+                Never share this code with anyone. If you did not request this code, you can safely ignore this email.
               </p>
             </td>
           </tr>
 
           <!-- Divider -->
           <tr>
-            <td style="padding:0 24px;">
-              <hr style="border:none;border-top:1px solid #e2e8f0;margin:0;" />
-            </td>
-          </tr>
-
-          <!-- Security notice -->
-          <tr>
-            <td style="padding:20px 24px;">
-              <table role="presentation" cellpadding="0" cellspacing="0" width="100%">
-                <tr>
-                  <td style="width:36px;vertical-align:top;">
-                    <div style="width:28px;height:28px;background-color:#fef3c7;border-radius:50%;text-align:center;line-height:28px;">
-                      <span style="font-size:14px;">⚠</span>
-                    </div>
-                  </td>
-                  <td style="vertical-align:top;padding-left:10px;">
-                    <p style="margin:0;font-size:12px;color:#64748b;line-height:1.5;">
-                      <strong style="color:#475569;">Security Notice:</strong> Never share this code with anyone. IDPS staff will never ask for your OTP. If you didn't request this code, please ignore this email.
-                    </p>
-                  </td>
-                </tr>
-              </table>
+            <td style="padding:0 28px;">
+              <hr style="border:none;border-top:1px solid #f1f5f9;margin:0;" />
             </td>
           </tr>
 
           <!-- Footer -->
           <tr>
-            <td style="background-color:#f8fafc;padding:20px 24px;text-align:center;border-top:1px solid #e2e8f0;">
-              <p style="margin:0 0 4px;font-size:13px;font-weight:600;color:#334155;">IDPS — Intelligent Data Processing System</p>
-              <p style="margin:0;font-size:11px;color:#94a3b8;">© ${year} IDPS Team · Automated message — do not reply</p>
+            <td style="padding:16px 28px 24px;text-align:center;">
+              <p style="margin:0;font-size:11px;color:#94a3b8;line-height:1.4;">
+                © ${year} International Delhi Public School · Automated message, please do not reply.
+              </p>
             </td>
           </tr>
 
