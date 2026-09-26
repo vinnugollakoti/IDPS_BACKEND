@@ -497,18 +497,40 @@ router.put("/update-student/:id", auth, async (req: AuthRequest, res: Response) 
             return res.status(400).json({message: "UnAuthorized request"})
         }
 
-        const {photo, name, gender, dob, classId, busId} = req.body;
+        const { photo, name, gender, dob, classId, busId, admissionno, adharnumber, mothertongue, socialcategory, bloodgroup, address, pincode, height, weight } = req.body;
         const studentId = Number(req.params.id);
+
+        let parsedDob: Date | null | undefined = undefined;
+        if (dob !== undefined) {
+            if (dob === null || (typeof dob === "string" && dob.trim() === "")) {
+                parsedDob = null;
+            } else {
+                const d = new Date(dob);
+                if (isNaN(d.getTime())) {
+                    return res.status(400).json({ message: "Invalid date format for dob" });
+                }
+                parsedDob = d;
+            }
+        }
 
         const student = await prisma.student.update({
             where: {id: studentId},
             data: {
                 photo,
-                name,
+                name: typeof name === "string" ? name.trim() : name,
                 gender,
-                dob,
-                classId,
-                busId
+                dob: parsedDob,
+                classId: classId !== undefined ? (classId ? Number(classId) : undefined) : undefined,
+                busId: busId !== undefined ? (busId ? Number(busId) : null) : undefined,
+                admissionno: admissionno !== undefined ? String(admissionno || "TEMP").trim() : undefined,
+                adharnumber: adharnumber !== undefined ? (adharnumber ? String(adharnumber).replace(/\D/g, '').slice(0, 12) : null) : undefined,
+                mothertongue: mothertongue !== undefined ? mapMotherTongue(mothertongue) : undefined,
+                socialcategory: socialcategory !== undefined ? mapSocialCategory(socialcategory) : undefined,
+                bloodgroup: bloodgroup !== undefined ? mapBloodGroup(bloodgroup) : undefined,
+                address: address !== undefined ? (address ? String(address).trim() : null) : undefined,
+                pincode: pincode !== undefined ? (pincode ? String(pincode).trim() : null) : undefined,
+                height: height !== undefined ? (height === null || height === '' ? null : Number(height)) : undefined,
+                weight: weight !== undefined ? (weight === null || weight === '' ? null : Number(weight)) : undefined
             },
 
             include: {
@@ -517,6 +539,8 @@ router.put("/update-student/:id", auth, async (req: AuthRequest, res: Response) 
                 bus: true
             }
         })
+
+        void serverCache.clear();
 
         res.json({message: "Student details updated successfully", data: student});
 

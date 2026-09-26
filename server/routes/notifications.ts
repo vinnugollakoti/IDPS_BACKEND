@@ -221,6 +221,7 @@ router.post("/send-broadcast", auth, async (req: AuthRequest, res: Response) => 
         title: title.trim(),
         body: body.trim(),
         channelId: "default",
+        categoryId: "school-notice",
         priority: "high",
         badge: 1,
         mutableContent: true,
