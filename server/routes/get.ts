@@ -126,7 +126,7 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
             where = { id: { in: classIds } };
         }
 
-        const cacheKey = `get-classes:${req.user.role}:${req.user.id}`;
+        const cacheKey = `get-classes:${req.user.role}:${authUserId}`;
         const cached = serverCache.get(cacheKey);
         if (cached) {
             return res.json({message: "Fetched classess successfully", data: cached});
@@ -198,7 +198,7 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
 router.get("/get-teachers", auth, async(req: AuthRequest, res: Response) => {
     try {
         if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
-            return res.status(400).json({message : "UnAuthorized request"});
+            return res.json({ message: "Fetched teachers successfully", data: [] });
         }
 
         const teachers = await prisma.teacher.findMany({
@@ -220,7 +220,7 @@ router.get("/get-teachers", auth, async(req: AuthRequest, res: Response) => {
 router.get("/get-parents", auth, async(req: AuthRequest, res: Response) => {
     try {
         if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
-            return res.status(400).json({message : "UnAuthorized request"});
+            return res.json({ message: "Fetched parents successfully", data: [] });
         }
 
         const parents = await prisma.parent.findMany({
@@ -375,13 +375,12 @@ router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
             return res.status(401).json({message : "UnAuthorized request"});
         }
 
-        const feeCacheKey = `get-fees:${req.user.role}:${req.user.id}`;
+        const authUserId = resolveAuthUserId(req.user);
+        const feeCacheKey = `get-fees:${req.user.role}:${authUserId}`;
         const cachedFees = serverCache.get(feeCacheKey);
         if (cachedFees) {
             return res.json({message: "Fetched fees successfully", data: cachedFees});
         }
-
-        const authUserId = resolveAuthUserId(req.user);
 
         // The relation filter also supports ClassTeacher assignments. Keep
         // this typed as an input object because Prisma's generated relation
@@ -461,6 +460,9 @@ router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
         const authUserId = resolveAuthUserId(req.user);
 
         let where: { classId?: { in: number[] }; id?: { in: number[] } } = {};
+        // For TEACHER, track classIds in the cache key to prevent stale
+        // empty-cache (from when teacher had no class) being served after assignment.
+        let teacherClassIds: number[] = [];
 
         if (req.user.role === "TEACHER") {
             const teacher = await prisma.teacher.findUnique({
@@ -478,9 +480,9 @@ router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
                 },
                 select: { id: true }
             });
-            const classIds = teacherClasses.map((c) => c.id);
-            if (classIds.length === 0) return res.json({ message: "Fetched students successfully", data: [] });
-            where = { classId: { in: classIds } };
+            teacherClassIds = teacherClasses.map((c) => c.id).sort((a, b) => a - b);
+            if (teacherClassIds.length === 0) return res.json({ message: "Fetched students successfully", data: [] });
+            where = { classId: { in: teacherClassIds } };
         } else if (req.user.role === "PARENT") {
             if (!authUserId) return res.json({ message: "Fetched students successfully", data: [] });
             const parent = await prisma.parent.findFirst({
@@ -497,7 +499,11 @@ router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
             where = { id: { in: studentIds } };
         }
 
-        const studentCacheKey = `get-students:${req.user.role}:${req.user.id}`;
+        // Include classIds in the cache key for TEACHER so that a change in
+        // class assignment always results in a fresh fetch.
+        const studentCacheKey = req.user.role === "TEACHER"
+            ? `get-students:TEACHER:${authUserId}:${teacherClassIds.join(",")}`
+            : `get-students:${req.user.role}:${authUserId}`;
         const cachedStudents = serverCache.get(studentCacheKey);
         if (cachedStudents) {
             return res.json({ message: "Fetched students successfully", data: cachedStudents });
