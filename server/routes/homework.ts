@@ -8,8 +8,16 @@ const router = express.Router();
 const resolveUserId = (user: any) => Number(user?.userId ?? user?.id) || null;
 const canManage = (role: string) => isExecutiveRole(role) || role === "TEACHER";
 const teacherForUser = async (userId: number | null) => userId ? prisma.teacher.findUnique({ where: { userId }, select: { id: true } }) : null;
-const cleanOldHomework = async () => prisma.homework.deleteMany({ where: { createdAt: { lt: new Date(Date.now() - 10 * 24 * 60 * 60 * 1000) } } });
-const serialize = (item: any) => ({ ...item, attachments: Array.isArray(item.attachments) ? item.attachments : [] });
+const serialize = (item: any) => {
+  const isArchived = item.dueDate
+    ? new Date(new Date(item.dueDate).setHours(23, 59, 59, 999)).getTime() < Date.now()
+    : false;
+  return {
+    ...item,
+    isArchived,
+    attachments: Array.isArray(item.attachments) ? item.attachments : [],
+  };
+};
 
 router.use(auth);
 
@@ -23,12 +31,46 @@ router.get("/classes", async (req: AuthRequest, res: Response) => {
 
 router.get("/", async (req: AuthRequest, res: Response) => {
   try {
-    await cleanOldHomework();
     const classId = req.query.classId ? Number(req.query.classId) : undefined;
     const userId = resolveUserId(req.user);
-    const teacher = req.user.role === "TEACHER" ? await teacherForUser(userId) : null;
+
+    // Build the where clause. Homework model only has plain classId / teacherId
+    // integers — there are no Prisma relations on the model, so relation-based
+    // filters (e.g. class.teachers) throw a Prisma error. Scope TEACHER results
+    // by fetching their assigned classIds manually.
     let where: any = classId ? { classId } : {};
-    if (teacher) where = { ...where, OR: [{ teacherId: teacher.id }, { class: { teachers: { some: { teacherId: teacher.id } } } }] };
+
+    if (req.user.role === "TEACHER") {
+      const teacher = await teacherForUser(userId);
+      if (!teacher) {
+        return res.json({ message: "Homework fetched successfully", data: [] });
+      }
+      // Find all classes the teacher is assigned to (primary or via junction table)
+      const teacherClasses = await prisma.class.findMany({
+        where: {
+          OR: [
+            { teacherId: teacher.id },
+            { teachers: { some: { teacherId: teacher.id } } },
+          ],
+        },
+        select: { id: true },
+      });
+      const assignedClassIds = teacherClasses.map((c) => c.id);
+      const conditions: any[] = [{ teacherId: teacher.id }];
+      if (assignedClassIds.length > 0) {
+        conditions.push({ classId: { in: assignedClassIds } });
+      }
+
+      where = classId
+        ? {
+            classId,
+            OR: conditions,
+          }
+        : {
+            OR: conditions,
+          };
+    }
+
     const homeworks = await prisma.homework.findMany({ where, orderBy: [{ dueDate: "asc" }, { createdAt: "desc" }] });
     const classIds = [...new Set(homeworks.map((item) => item.classId))];
     const teacherIds = [...new Set(homeworks.map((item) => item.teacherId))];
@@ -51,7 +93,6 @@ router.post("/", async (req: AuthRequest, res: Response) => {
     const uploaded = [];
     for (const [index, file] of (Array.isArray(attachments) ? attachments : []).entries()) uploaded.push(await uploadHomeworkFile({ imageBase64: file.base64, imageMimeType: file.mimeType, path: `homework/${teacherId}_${Date.now()}_${index}` }));
     const result = await prisma.homework.create({ data: { classId: Number(classId), teacherId, subject: subject.trim(), description: description.trim(), dueDate: new Date(dueDate), attachments: uploaded } });
-    await cleanOldHomework();
     void logAudit({ req, action: "CREATE_HOMEWORK", tag: "NOTICE" as any, details: `Assigned ${subject.trim()} homework to class ${classId}`, entityType: "Homework", entityId: result.id });
     return res.status(201).json({ message: "Homework assigned successfully", data: serialize(result) });
   } catch (err: any) { console.error("POST /homework error:", err); return res.status(500).json({ message: err?.message || "Unable to assign homework" }); }
@@ -63,7 +104,20 @@ router.put("/:id", async (req: AuthRequest, res: Response) => {
     const id = Number(req.params.id); const existing = await prisma.homework.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ message: "Homework not found" });
     const teacher = req.user.role === "TEACHER" ? await teacherForUser(resolveUserId(req.user)) : null;
-    if (teacher && existing.teacherId !== teacher.id) return res.status(403).json({ message: "Teachers can edit only their own homework" });
+    if (teacher && existing.teacherId !== teacher.id) {
+      const isAssigned = await prisma.class.findFirst({
+        where: {
+          id: existing.classId,
+          OR: [
+            { teacherId: teacher.id },
+            { teachers: { some: { teacherId: teacher.id } } },
+          ],
+        },
+      });
+      if (!isAssigned) {
+        return res.status(403).json({ message: "Teachers can edit only homework assigned to their classes or created by them" });
+      }
+    }
     const { classId, subject, description, dueDate } = req.body ?? {};
     const result = await prisma.homework.update({ where: { id }, data: { ...(classId ? { classId: Number(classId) } : {}), ...(subject?.trim() ? { subject: subject.trim() } : {}), ...(description?.trim() ? { description: description.trim() } : {}), ...(dueDate && !Number.isNaN(Date.parse(dueDate)) ? { dueDate: new Date(dueDate) } : {}) } });
     return res.json({ message: "Homework updated successfully", data: serialize(result) });
@@ -76,7 +130,20 @@ router.delete("/:id", async (req: AuthRequest, res: Response) => {
     const id = Number(req.params.id); const existing = await prisma.homework.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ message: "Homework not found" });
     const teacher = req.user.role === "TEACHER" ? await teacherForUser(resolveUserId(req.user)) : null;
-    if (teacher && existing.teacherId !== teacher.id) return res.status(403).json({ message: "Teachers can delete only their own homework" });
+    if (teacher && existing.teacherId !== teacher.id) {
+      const isAssigned = await prisma.class.findFirst({
+        where: {
+          id: existing.classId,
+          OR: [
+            { teacherId: teacher.id },
+            { teachers: { some: { teacherId: teacher.id } } },
+          ],
+        },
+      });
+      if (!isAssigned) {
+        return res.status(403).json({ message: "Teachers can delete only homework assigned to their classes or created by them" });
+      }
+    }
     await prisma.homework.delete({ where: { id } }); return res.json({ message: "Homework deleted successfully" });
   } catch (err: any) { return res.status(500).json({ message: err?.message || "Unable to delete homework" }); }
 });
