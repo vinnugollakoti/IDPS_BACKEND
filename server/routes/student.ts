@@ -991,7 +991,20 @@ router.post("/fee/bulk-ingest-portal", auth, async (req: AuthRequest, res: Respo
                 let confidence = 1.0;
 
                 if (item.studentId && Number.isInteger(Number(item.studentId))) {
-                    matchedStudent = candidateStudents.find((s) => s.id === Number(item.studentId)) || null;
+                    const sid = Number(item.studentId);
+                    matchedStudent = candidateStudents.find((s) => s.id === sid) || null;
+                    if (!matchedStudent) {
+                        matchedStudent = await prisma.student.findUnique({
+                            where: { id: sid },
+                            select: {
+                                id: true,
+                                name: true,
+                                admissionno: true,
+                                classId: true,
+                                address: true,
+                            },
+                        });
+                    }
                 }
 
                 if (!matchedStudent) {
@@ -1162,8 +1175,13 @@ router.post("/fee/bulk-ingest-portal", auth, async (req: AuthRequest, res: Respo
                     feesProcessed.push(`BOOKS_UNIFORM (₹${finalBooksTotal})`);
 
                     if (booksPaid > 0) {
-                        const extraNote = extraUniform > 0 ? ` | Extra: ₹${extraUniform}` : "";
-                        await syncPayment(feeRecord.id, booksPaid, `Books & Uniform${extraNote}`, receiptStr);
+                        await syncPayment(feeRecord.id, booksPaid, "Books & Uniform", receiptStr);
+                    }
+                    // EXTRA UNIFORM is a separately paid component in the source workbook.
+                    // It is included in the Books & Uniform fee total, so it must also be
+                    // recorded as a payment; otherwise collected totals are understated.
+                    if (extraUniform > 0) {
+                        await syncPayment(feeRecord.id, extraUniform, "Extra Uniform", receiptStr);
                     }
                 }
 
@@ -1274,17 +1292,57 @@ router.post("/create-fee", auth, async(req: AuthRequest, res: Response) => {
             return res.status(404).json({ message: "Student record not found." });
         }
 
-        const feeTitle = title || type;
+        const feeTitle = (title || type).trim();
         const feeTypeEnum = parseFeeType(type);
+        const normalizedYear = academicYear.trim();
 
         const result = await prisma.$transaction(async(tx) => {
+            const existingFee = await tx.fee.findUnique({
+                where: {
+                    studentId_type_academicYear: {
+                        studentId: parsedStudentId,
+                        type: feeTypeEnum,
+                        academicYear: normalizedYear
+                    }
+                },
+                include: {
+                    payments: true
+                }
+            });
+
+            if (existingFee) {
+                // If a fee record for this type already exists, increase the total amount
+                // and append the new description if it's different.
+                const newTotal = Number(existingFee.total) + parsedTotal;
+                const updatedTitle = existingFee.title && existingFee.title !== feeTitle
+                    ? `${existingFee.title} + ${feeTitle}`
+                    : (feeTitle || existingFee.title);
+
+                const updatedFee = await tx.fee.update({
+                    where: { id: existingFee.id },
+                    data: {
+                        total: newTotal,
+                        title: updatedTitle
+                    },
+                    include: {
+                        student: true,
+                        payments: {
+                            include: {
+                                verifiedBy: true
+                            }
+                        }
+                    }
+                });
+                return updatedFee;
+            }
+
             const fee = await tx.fee.create({
                 data: {
                     studentId: parsedStudentId,
                     title: feeTitle,
                     type: feeTypeEnum,
                     total: parsedTotal,
-                    academicYear: academicYear.trim()
+                    academicYear: normalizedYear
                 },
 
                 include: {
@@ -1310,7 +1368,7 @@ router.post("/create-fee", auth, async(req: AuthRequest, res: Response) => {
             req,
             action: "CREATE_FEE",
             tag: "FEE",
-            details: `[FEE ASSIGNED / INCREASED] Performed by ${req.user.name || req.user.role} (${req.user.role}). Created new ${feeTypeEnum} fee structure "${feeTitle}" of ₹${Number(total).toLocaleString('en-IN')} (Academic Year: ${academicYear}) for student ${studentNameStr}. Total fee bill increased by +₹${Number(total).toLocaleString('en-IN')}.`,
+            details: `[FEE ASSIGNED / INCREASED] Performed by ${req.user.name || req.user.role} (${req.user.role}). Assigned/Updated ${feeTypeEnum} fee structure "${feeTitle}" of ₹${Number(total).toLocaleString('en-IN')} (Academic Year: ${academicYear}) for student ${studentNameStr}.`,
             entityType: "Fee",
             entityId: result.id,
         });
@@ -1318,11 +1376,10 @@ router.post("/create-fee", auth, async(req: AuthRequest, res: Response) => {
         serverCache.invalidate("get-fees");
         serverCache.invalidate("get-students");
 
-        return res.json({message: "Fee bill created successfully", data: result});
+        return res.json({message: "Fee bill saved successfully", data: result});
 
     } catch (error: any) {
         console.error("Error creating fee:", error);
-        if (error?.code === "P2002") return res.status(409).json({ message: "A fee with this type already exists for this student and academic year." });
         return res.status(500).json({message: error?.message || "Error creating Fee bill"});
     }
 });

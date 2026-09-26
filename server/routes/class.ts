@@ -79,7 +79,7 @@ router.post("/create-class", auth, async(req: AuthRequest, res: Response) => {
 
 router.post("/create-subject", auth, async (req: AuthRequest, res: Response) => {
     try {
-        if ((req.user.role) !== "PRINCIPAL" &&  req.user.role !== "RECEPTIONIST" && req.user.role !== "TEACHER") {
+        if (!isStaffRole(req.user.role)) {
             return res.status(400).json({message : "UnAuthorized request"});
         }
 
@@ -137,7 +137,7 @@ router.post("/create-subject", auth, async (req: AuthRequest, res: Response) => 
 
 router.post("/create-exam", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (req.user.role !== 'TEACHER' && req.user.role !== 'PRINCIPAL' && req.user.role !== 'RECEPTIONIST') {
+        if (!isStaffRole(req.user.role)) {
             return res.status(400).json({message : "UnAuthorized request"});
         }
 
@@ -324,7 +324,7 @@ router.post("/release-exam", auth, async(req: AuthRequest, res: Response) => {
 
 router.post("/create-marks", auth, async(req: AuthRequest, res: Response) => {
     try { 
-        if (req.user.role !== "TEACHER" && req.user.role !== "PRINCIPAL" && req.user.role !== "RECEPTIONIST") {
+        if (!isStaffRole(req.user.role)) {
             return res.status(400).json({message: "Unauthorized request"});
         }
 
@@ -467,7 +467,7 @@ router.put("/update-class/:id", auth, async(req: AuthRequest, res: Response) => 
 router.put("/update-marks/:id", auth, async (req: AuthRequest, res: Response) => {
   try {
 
-    if (req.user.role !== "PRINCIPAL" && req.user.role !== "RECEPTIONIST") {
+    if (!isStaffRole(req.user.role)) {
       return res.status(403).json({ message: "Unauthorized request" });
     }
 
@@ -505,7 +505,7 @@ router.put("/update-marks/:id", auth, async (req: AuthRequest, res: Response) =>
 
 router.put("/update-subject/:id", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (req.user.role !== "PRINCIPAL" && req.user.role !== "RECEPTIONIST") {
+        if (!isStaffRole(req.user.role)) {
             return res.status(403).json({ message: "Unauthorized request" });
         }
 
@@ -535,7 +535,7 @@ router.put("/update-subject/:id", auth, async(req: AuthRequest, res: Response) =
 
 router.put("/update-subject-classes/:id", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (req.user.role !== "PRINCIPAL" && req.user.role !== "RECEPTIONIST") {
+        if (!isStaffRole(req.user.role)) {
             return res.status(403).json({ message: "Unauthorized request" });
         }
 
@@ -691,7 +691,7 @@ router.delete("/delete-class/:id", auth, async (req: AuthRequest, res: Response)
 
 router.put("/update-exam/:id", auth, async (req: AuthRequest, res: Response) => {
     try {
-        if (req.user.role !== "PRINCIPAL" && req.user.role !== "RECEPTIONIST") {
+        if (!isStaffRole(req.user.role)) {
             return res.status(403).json({ message: "Unauthorized request" });
         }
 
