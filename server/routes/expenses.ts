@@ -74,4 +74,93 @@ router.get("/:id", async (req: AuthRequest, res: Response) => {
   }
 });
 
+router.put("/:id", async (req: AuthRequest, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const existing = await prisma.expense.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ message: "Expense not found" });
+
+    const { title, category, amount, transactionDate, paymentMode, onlineAccount, notes, billBase64, billMimeType } = req.body ?? {};
+    if (category && !categories.includes(category)) {
+      return res.status(400).json({ message: "Invalid category." });
+    }
+    if (amount !== undefined && (!Number.isFinite(Number(amount)) || Number(amount) <= 0)) {
+      return res.status(400).json({ message: "Amount must be a positive number." });
+    }
+    if (transactionDate && Number.isNaN(Date.parse(transactionDate))) {
+      return res.status(400).json({ message: "Invalid transaction date." });
+    }
+    if (paymentMode && !["CASH", "ONLINE"].includes(paymentMode)) {
+      return res.status(400).json({ message: "Payment mode must be Cash or Online." });
+    }
+    const finalMode = paymentMode || existing.paymentMode;
+    if (finalMode === "ONLINE" && onlineAccount && !onlineAccounts.includes(onlineAccount)) {
+      return res.status(400).json({ message: "Invalid online account." });
+    }
+
+    let bill: { billUrl: string; billPath: string; billMimeType: string } | undefined;
+    if (billBase64) {
+      bill = await uploadExpenseBill({
+        imageBase64: billBase64,
+        imageMimeType: billMimeType,
+        path: `expenses/${req.user.userId ?? req.user.id}_${Date.now()}`
+      });
+    }
+
+    const updated = await prisma.expense.update({
+      where: { id },
+      data: {
+        ...(title?.trim() ? { title: title.trim() } : {}),
+        ...(category ? { category } : {}),
+        ...(amount !== undefined ? { amount: Number(amount) } : {}),
+        ...(transactionDate ? { transactionDate: new Date(transactionDate) } : {}),
+        ...(paymentMode ? { paymentMode } : {}),
+        ...(finalMode === "ONLINE" ? { onlineAccount: onlineAccount || existing.onlineAccount } : { onlineAccount: null }),
+        ...(notes !== undefined ? { notes: notes?.trim() || null } : {}),
+        ...(bill ?? {}),
+      },
+      include: { createdBy: { select: { id: true, name: true, role: true } } },
+    });
+
+    void logAudit({
+      req,
+      action: "UPDATE_EXPENSE" as any,
+      tag: "FINANCE" as any,
+      details: `Updated expense #${id} "${updated.title}" for ₹${updated.amount}`,
+      entityType: "Expense",
+      entityId: updated.id
+    });
+
+    return res.json({ message: "Expense updated successfully", data: { ...updated, amount: updated.amount.toString() } });
+  } catch (err: any) {
+    console.error("PUT /expenses/:id error:", err);
+    return res.status(500).json({ message: err?.message || "Unable to update expense" });
+  }
+});
+
+router.delete("/:id", async (req: AuthRequest, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const existing = await prisma.expense.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ message: "Expense not found" });
+
+    await prisma.expense.delete({ where: { id } });
+
+    void logAudit({
+      req,
+      action: "DELETE_EXPENSE" as any,
+      tag: "FINANCE" as any,
+      details: `Deleted expense #${id} "${existing.title}" (₹${existing.amount})`,
+      entityType: "Expense",
+      entityId: id
+    });
+
+    return res.json({ message: "Expense deleted successfully", data: { id } });
+  } catch (err: any) {
+    console.error("DELETE /expenses/:id error:", err);
+    return res.status(500).json({ message: err?.message || "Unable to delete expense" });
+  }
+});
+
 export default router;
+
