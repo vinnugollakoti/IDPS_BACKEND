@@ -553,7 +553,18 @@ router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
 // PRINCIPAL ONLY: GET AUDIT LOGS WITH TAG & SEARCH FILTERS
 router.get("/get-audit-logs", auth, async (req: AuthRequest, res: Response) => {
     try {
-        if (!isExecutiveRole(req.user.role)) {
+        let isExec = isExecutiveRole(req.user?.role);
+        if (!isExec && (req.user?.userId || req.user?.id)) {
+            const dbUser = await prisma.user.findUnique({
+                where: { id: Number(req.user.userId || req.user.id) },
+                select: { role: true },
+            });
+            if (dbUser && isExecutiveRole(dbUser.role)) {
+                req.user.role = dbUser.role;
+                isExec = true;
+            }
+        }
+        if (!isExec) {
             return res.status(403).json({ message: "Unauthorized request. Only Executive leadership (Principal, Director, Chairman) can view system audit logs." });
         }
 

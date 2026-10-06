@@ -8,8 +8,21 @@ const router = express.Router();
 const categories = ["STATIONERY", "EVENTS", "SPORTS_EQUIPMENT", "CLASS_MISCELLANEOUS", "COMPUTER_EQUIPMENT", "UTILITY", "FURNITURE", "OTHER"];
 const onlineAccounts = ["SANKALP", "NARESH_SIR"];
 
-router.use(auth, (req: AuthRequest, res: Response, next) => {
-  if (!isExecutiveRole(req.user?.role)) return res.status(403).json({ message: "Spending Manager is restricted to Director and Chairman accounts." });
+router.use(auth, async (req: AuthRequest, res: Response, next) => {
+  let isExec = isExecutiveRole(req.user?.role);
+  if (!isExec && (req.user?.userId || req.user?.id)) {
+    try {
+      const dbUser = await prisma.user.findUnique({
+        where: { id: Number(req.user.userId || req.user.id) },
+        select: { role: true },
+      });
+      if (dbUser && isExecutiveRole(dbUser.role)) {
+        req.user.role = dbUser.role;
+        isExec = true;
+      }
+    } catch {}
+  }
+  if (!isExec) return res.status(403).json({ message: "Spending Manager is restricted to Director and Chairman accounts." });
   next();
 });
 
