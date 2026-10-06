@@ -5,10 +5,32 @@ import { serverCache } from "../utils/cache";
 
 const router = Router();
 
+async function verifyExecutiveAccess(req: AuthRequest): Promise<boolean> {
+  if (!req.user) return false;
+  if (isExecutiveRole(req.user.role)) return true;
+  const uid = Number(req.user.userId || req.user.id);
+  if (Number.isInteger(uid) && uid > 0) {
+    try {
+      const dbUser = await prisma.user.findUnique({
+        where: { id: uid },
+        select: { role: true },
+      });
+      if (dbUser && isExecutiveRole(dbUser.role)) {
+        req.user.role = dbUser.role;
+        return true;
+      }
+    } catch {
+      return false;
+    }
+  }
+  return false;
+}
+
 // GET /permission/staff - List all staff users (TEACHER, RECEPTIONIST, PRINCIPAL) with permission status
 router.get("/staff", auth, async (req: AuthRequest, res: Response) => {
   try {
-    if (!req.user || !isExecutiveRole(req.user.role)) {
+    const isExecutive = await verifyExecutiveAccess(req);
+    if (!isExecutive) {
       return res.status(403).json({ message: "Access restricted to Executive roles (Director, Chairman, Principal)" });
     }
 
@@ -134,6 +156,11 @@ router.get("/staff", auth, async (req: AuthRequest, res: Response) => {
 // GET /permission/user/:userId - Fetch permissions for a single user
 router.get("/user/:userId", auth, async (req: AuthRequest, res: Response) => {
   try {
+    const isExecutive = await verifyExecutiveAccess(req);
+    if (!isExecutive) {
+      return res.status(403).json({ message: "Access restricted to Executive roles (Director, Chairman, Principal)" });
+    }
+
     const targetUserId = parseInt(req.params.userId, 10);
     if (isNaN(targetUserId)) {
       return res.status(400).json({ message: "Invalid user ID" });
@@ -157,7 +184,8 @@ router.get("/user/:userId", auth, async (req: AuthRequest, res: Response) => {
 // POST /permission/update - Update allowed modules for a staff user
 router.post("/update", auth, async (req: AuthRequest, res: Response) => {
   try {
-    if (!req.user || (req.user.role !== "DIRECTOR" && req.user.role !== "CHAIRMAN" && req.user.role !== "PRINCIPAL")) {
+    const isExecutive = await verifyExecutiveAccess(req);
+    if (!isExecutive) {
       return res.status(403).json({ message: "Only Director, Chairman, or Principal can update user permissions" });
     }
 

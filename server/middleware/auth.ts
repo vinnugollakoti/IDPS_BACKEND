@@ -31,10 +31,14 @@ export function auth(req: AuthRequest, res: Response, next: NextFunction) {
   }
 }
 
-export function isExecutiveRole(role: string): boolean {
-  return role === "PRINCIPAL" || role === "DIRECTOR" || role === "CHAIRMAN";
+export function isExecutiveRole(role?: string): boolean {
+  if (!role || typeof role !== "string") return false;
+  const r = role.trim().toUpperCase();
+  return r === "PRINCIPAL" || r === "DIRECTOR" || r === "CHAIRMAN";
 }
 
-export function isStaffRole(role: string): boolean {
-  return isExecutiveRole(role) || role === "RECEPTIONIST" || role === "TEACHER";
+export function isStaffRole(role?: string): boolean {
+  if (!role || typeof role !== "string") return false;
+  const r = role.trim().toUpperCase();
+  return isExecutiveRole(r) || r === "RECEPTIONIST" || r === "TEACHER";
 }
