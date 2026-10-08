@@ -9,22 +9,184 @@ const categories = ["STATIONERY", "EVENTS", "SPORTS_EQUIPMENT", "CLASS_MISCELLAN
 const onlineAccounts = ["SANKALP", "NARESH_SIR"];
 
 router.use(auth, async (req: AuthRequest, res: Response, next) => {
-  let isExec = isExecutiveRole(req.user?.role);
-  if (!isExec && (req.user?.userId || req.user?.id)) {
+  let isAllowed = isExecutiveRole(req.user?.role) || req.user?.role === "RECEPTIONIST";
+  if (!isAllowed && (req.user?.userId || req.user?.id)) {
     try {
       const dbUser = await prisma.user.findUnique({
         where: { id: Number(req.user.userId || req.user.id) },
         select: { role: true },
       });
-      if (dbUser && isExecutiveRole(dbUser.role)) {
+      if (dbUser && (isExecutiveRole(dbUser.role) || dbUser.role === "RECEPTIONIST")) {
         req.user.role = dbUser.role;
-        isExec = true;
+        isAllowed = true;
       }
     } catch {}
   }
-  if (!isExec) return res.status(403).json({ message: "Spending Manager is restricted to Director and Chairman accounts." });
+  if (!isAllowed) return res.status(403).json({ message: "Spending Manager is restricted to authorized administrative accounts." });
   next();
 });
+
+async function calculateReserveSummary() {
+  const [reserves, cashExpenses] = await Promise.all([
+    prisma.expenseReserve.findMany({ select: { amount: true } }),
+    prisma.expense.findMany({ where: { paymentMode: "CASH" }, select: { amount: true } }),
+  ]);
+  const totalReserveAdded = reserves.reduce((sum, r) => sum + Number(r.amount), 0);
+  const totalCashSpent = cashExpenses.reduce((sum, e) => sum + Number(e.amount), 0);
+  const currentReserveBalance = totalReserveAdded - totalCashSpent;
+  return {
+    totalReserveAdded,
+    totalCashSpent,
+    currentReserveBalance,
+  };
+}
+
+// ─── Cash Reserve Endpoints ───────────────────────────────────────────────────
+
+router.get("/reserves", async (req: AuthRequest, res: Response) => {
+  try {
+    const [reserves, summary] = await Promise.all([
+      prisma.expenseReserve.findMany({
+        orderBy: [{ transactionDate: "desc" }, { createdAt: "desc" }],
+        include: { createdBy: { select: { id: true, name: true, role: true } } },
+      }),
+      calculateReserveSummary(),
+    ]);
+    return res.json({
+      message: "Reserves fetched successfully",
+      data: reserves.map((r) => ({ ...r, amount: r.amount.toString() })),
+      summary,
+    });
+  } catch (err: any) {
+    console.error("GET /expenses/reserves error:", err);
+    return res.status(500).json({ message: err?.message || "Unable to fetch reserves" });
+  }
+});
+
+router.post("/reserves", async (req: AuthRequest, res: Response) => {
+  try {
+    const { amount, givenBy, transactionDate, notes } = req.body ?? {};
+    if (!Number.isFinite(Number(amount)) || Number(amount) <= 0) {
+      return res.status(400).json({ message: "Amount must be a positive number." });
+    }
+    if (!givenBy?.trim()) {
+      return res.status(400).json({ message: "Given by / Source name is required." });
+    }
+    if (!transactionDate || Number.isNaN(Date.parse(transactionDate))) {
+      return res.status(400).json({ message: "Valid transaction date is required." });
+    }
+
+    const reserve = await prisma.expenseReserve.create({
+      data: {
+        amount: Number(amount),
+        givenBy: givenBy.trim(),
+        transactionDate: new Date(transactionDate),
+        notes: notes?.trim() || null,
+        createdById: Number(req.user.userId ?? req.user.id),
+      },
+      include: { createdBy: { select: { id: true, name: true, role: true } } },
+    });
+
+    void logAudit({
+      req,
+      action: "ADD_EXPENSE_RESERVE" as any,
+      tag: "FEE" as any,
+      details: `Added ₹${amount} to cash reserve from "${givenBy.trim()}"`,
+      entityType: "ExpenseReserve",
+      entityId: reserve.id,
+    });
+
+    const summary = await calculateReserveSummary();
+
+    return res.status(201).json({
+      message: "Reserve added successfully",
+      data: { ...reserve, amount: reserve.amount.toString() },
+      summary,
+    });
+  } catch (err: any) {
+    console.error("POST /expenses/reserves error:", err);
+    return res.status(500).json({ message: err?.message || "Unable to add reserve" });
+  }
+});
+
+router.put("/reserves/:id", async (req: AuthRequest, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const existing = await prisma.expenseReserve.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ message: "Reserve entry not found" });
+
+    const { amount, givenBy, transactionDate, notes } = req.body ?? {};
+    if (amount !== undefined && (!Number.isFinite(Number(amount)) || Number(amount) <= 0)) {
+      return res.status(400).json({ message: "Amount must be a positive number." });
+    }
+    if (transactionDate && Number.isNaN(Date.parse(transactionDate))) {
+      return res.status(400).json({ message: "Valid transaction date is required." });
+    }
+
+    const updated = await prisma.expenseReserve.update({
+      where: { id },
+      data: {
+        ...(amount !== undefined ? { amount: Number(amount) } : {}),
+        ...(givenBy?.trim() ? { givenBy: givenBy.trim() } : {}),
+        ...(transactionDate ? { transactionDate: new Date(transactionDate) } : {}),
+        ...(notes !== undefined ? { notes: notes?.trim() || null } : {}),
+      },
+      include: { createdBy: { select: { id: true, name: true, role: true } } },
+    });
+
+    void logAudit({
+      req,
+      action: "UPDATE_EXPENSE_RESERVE" as any,
+      tag: "FEE" as any,
+      details: `Updated reserve entry #${id} (₹${updated.amount})`,
+      entityType: "ExpenseReserve",
+      entityId: updated.id,
+    });
+
+    const summary = await calculateReserveSummary();
+
+    return res.json({
+      message: "Reserve updated successfully",
+      data: { ...updated, amount: updated.amount.toString() },
+      summary,
+    });
+  } catch (err: any) {
+    console.error("PUT /expenses/reserves/:id error:", err);
+    return res.status(500).json({ message: err?.message || "Unable to update reserve" });
+  }
+});
+
+router.delete("/reserves/:id", async (req: AuthRequest, res: Response) => {
+  try {
+    const id = Number(req.params.id);
+    const existing = await prisma.expenseReserve.findUnique({ where: { id } });
+    if (!existing) return res.status(404).json({ message: "Reserve entry not found" });
+
+    await prisma.expenseReserve.delete({ where: { id } });
+
+    void logAudit({
+      req,
+      action: "DELETE_EXPENSE_RESERVE" as any,
+      tag: "FEE" as any,
+      details: `Deleted reserve entry #${id} (₹${existing.amount}) given by "${existing.givenBy}"`,
+      entityType: "ExpenseReserve",
+      entityId: id,
+    });
+
+    const summary = await calculateReserveSummary();
+
+    return res.json({
+      message: "Reserve deleted successfully",
+      data: { id },
+      summary,
+    });
+  } catch (err: any) {
+    console.error("DELETE /expenses/reserves/:id error:", err);
+    return res.status(500).json({ message: err?.message || "Unable to delete reserve" });
+  }
+});
+
+// ─── Expense Endpoints ────────────────────────────────────────────────────────
 
 router.get("/", async (req: AuthRequest, res: Response) => {
   try {

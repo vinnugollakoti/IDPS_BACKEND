@@ -115,7 +115,7 @@ router.get("/staff", auth, async (req: AuthRequest, res: Response) => {
             "profile",
           ];
         } else if (user.role === "RECEPTIONIST") {
-          allowedModules = ["students", "attendance"];
+          allowedModules = ["students", "attendance", "spending", "downloads"];
         } else if (user.role === "TEACHER") {
           allowedModules = [
             "students",
@@ -216,6 +216,9 @@ router.post("/update", auth, async (req: AuthRequest, res: Response) => {
       "permission",
       "homework",
       "whatsapp",
+      "spending",
+      "complaints",
+      "downloads",
       "profile",
     ];
 
