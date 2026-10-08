@@ -1470,13 +1470,23 @@ router.post("/create-payment", auth, async(req: AuthRequest, res: Response) => {
             return res.status(401).json({ message: "Invalid token payload" });
         }
 
-        const { feeId, feeStructureId, amount, method, status, screenshot, customReason, applyToCategory } = req.body;
+        const { feeId, feeStructureId, amount, method, status, screenshot, customReason, applyToCategory, paymentDate, date } = req.body;
         let targetFeeId = feeId || feeStructureId;
 
         const parsedAmount = parsePositiveMoney(amount);
         const parsedFeeId = Number(targetFeeId);
         const normalizedMethod = String(method || "CASH").toUpperCase();
         const normalizedStatus = String(status || "SUCCESS").toUpperCase();
+        const rawDate = paymentDate || date;
+        let effectiveDate = new Date();
+        if (rawDate) {
+            const dateStr = String(rawDate).trim();
+            if (/^\d{4}-\d{2}-\d{2}$/.test(dateStr)) {
+                effectiveDate = new Date(`${dateStr}T12:00:00.000Z`);
+            } else if (!Number.isNaN(Date.parse(dateStr))) {
+                effectiveDate = new Date(dateStr);
+            }
+        }
         if (!Number.isInteger(parsedFeeId) || parsedFeeId <= 0 || parsedAmount === null) {
             return res.status(400).json({ message: "A valid fee and a positive payment amount with at most 2 decimals are required." });
         }
@@ -1510,7 +1520,16 @@ router.post("/create-payment", auth, async(req: AuthRequest, res: Response) => {
                 }
             }
             return tx.payment.create({
-                data: { feeId: parsedFeeId, amount: parsedAmount, method: normalizedMethod as any, status: normalizedStatus as any, screenshot: noteText, verifiedById: authUserId, verifiedAt: new Date() },
+                data: {
+                    feeId: parsedFeeId,
+                    amount: parsedAmount,
+                    method: normalizedMethod as any,
+                    status: normalizedStatus as any,
+                    screenshot: noteText,
+                    verifiedById: authUserId,
+                    verifiedAt: effectiveDate,
+                    createdAt: effectiveDate,
+                },
                 include: { fee: true, verifiedBy: true },
             });
         });
