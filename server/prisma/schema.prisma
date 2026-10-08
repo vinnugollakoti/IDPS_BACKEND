@@ -180,6 +180,7 @@ model User {
   sentNotifications BroadcastNotification[]
   auditLogs         AuditLog[]
   expensesCreated   Expense[]
+  expenseReservesCreated ExpenseReserve[]
   complaints       Complaint[]
 
   userPermissions UserPermission[]
@@ -474,6 +475,21 @@ model Expense {
   @@index([category])
   @@index([transactionDate])
   @@index([paymentMode])
+  @@index([createdById])
+}
+
+model ExpenseReserve {
+  id              Int      @id @default(autoincrement())
+  amount          Decimal  @db.Decimal(12, 2)
+  givenBy         String
+  transactionDate DateTime @db.Date
+  notes           String?
+  createdById     Int
+  createdBy       User     @relation(fields: [createdById], references: [id])
+  createdAt       DateTime @default(now())
+  updatedAt       DateTime @updatedAt
+
+  @@index([transactionDate])
   @@index([createdById])
 }
 
