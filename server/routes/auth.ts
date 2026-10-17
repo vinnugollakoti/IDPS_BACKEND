@@ -1,10 +1,42 @@
 import express, {Request, Response} from "express";
+import { scryptSync, timingSafeEqual } from "node:crypto";
 import { randomInt } from "node:crypto";
 import prisma from "../prisma/client";
 import { AuthRequest, auth } from "../middleware/auth";
 import {sendMOtpail} from "../mailer/mail"
 import { generateToken } from "../middleware/jwt";
 const router = express.Router();
+
+const verifyReviewerPassword = (password: string, stored: string) => {
+    const [salt, encoded] = stored.split(":");
+    if (!salt || !encoded) return false;
+    const expected = Buffer.from(encoded, "hex");
+    const actual = scryptSync(password, salt, expected.length);
+    return expected.length === actual.length && timingSafeEqual(expected, actual);
+};
+
+// Dedicated reusable Play reviewer login. Credentials stay on the server and
+// never ship inside the Android/PWA bundle. Configure both values in Render:
+// PLAY_REVIEW_EMAIL and PLAY_REVIEW_PASSWORD_HASH (salt:hex scrypt hash).
+router.post("/play-review-login", async (req: Request, res: Response) => {
+    try {
+        const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+        const password = typeof req.body?.password === "string" ? req.body.password : "";
+        const configuredEmail = process.env.PLAY_REVIEW_EMAIL?.trim().toLowerCase();
+        const configuredHash = process.env.PLAY_REVIEW_PASSWORD_HASH;
+        if (!configuredEmail || !configuredHash || email !== configuredEmail || !verifyReviewerPassword(password, configuredHash)) {
+            return res.status(401).json({ message: "Invalid review credentials" });
+        }
+        const user = await prisma.user.findUnique({ where: { email: configuredEmail }, include: { teacher: true, parent: true, userPermissions: { select: { module: true, isAllowed: true } } } });
+        if (!user || user.role !== "CHAIRMAN") return res.status(403).json({ message: "Review account is not configured correctly" });
+        const token = generateToken(user.id, user.role);
+        const { otp: _otp, otpExpiry: _expiry, ...safeUser } = user;
+        const allowedModules = user.userPermissions.length ? user.userPermissions.filter((item) => item.isAllowed).map((item) => item.module) : undefined;
+        return res.json({ message: "Review login successful", token, user: { ...safeUser, photoUrl: user.photoUrl || user.teacher?.photo || undefined, allowedModules } });
+    } catch {
+        return res.status(401).json({ message: "Invalid review credentials" });
+    }
+});
 
 router.post("/login", async( req: Request, res: Response) => {
     try {
