@@ -31,7 +31,11 @@ router.post("/play-review-login", async (req: Request, res: Response) => {
         if (!user || user.role !== "CHAIRMAN") return res.status(403).json({ message: "Review account is not configured correctly" });
         const token = generateToken(user.id, user.role);
         const { otp: _otp, otpExpiry: _expiry, ...safeUser } = user;
-        const allowedModules = user.userPermissions.length ? user.userPermissions.filter((item) => item.isAllowed).map((item) => item.module) : undefined;
+        // Keep the Play review account away from live fee data even if its
+        // permission rows are recreated or missing during a deployment.
+        const allowedModules = user.userPermissions.length
+            ? user.userPermissions.filter((item) => item.isAllowed && item.module !== "fees").map((item) => item.module)
+            : ["students", "circulars", "exams", "classes", "attendance", "timetable", "notifications", "permission", "homework", "whatsapp", "spending", "complaints", "downloads", "profile"];
         return res.json({ message: "Review login successful", token, user: { ...safeUser, photoUrl: user.photoUrl || user.teacher?.photo || undefined, allowedModules } });
     } catch {
         return res.status(401).json({ message: "Invalid review credentials" });
