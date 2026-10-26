@@ -1834,7 +1834,27 @@ router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res:
             return res.status(400).json({message: "Student not existed"});
         }
 
-        const feeSummary = student.feeDetails.map((fee) => {
+        if (req.user.role === "TEACHER") {
+            const authUserId = resolveAuthUserId(req.user);
+            const teacher = await prisma.teacher.findUnique({
+                where: { userId: authUserId ?? -1 },
+                select: { id: true },
+            });
+            if (!teacher) return res.status(403).json({ message: "You are not assigned to this student" });
+            const assignedClass = await prisma.class.findFirst({
+                where: {
+                    id: student.classId,
+                    OR: [
+                        { teacherId: teacher.id },
+                        { teachers: { some: { teacherId: teacher.id } } },
+                    ],
+                },
+                select: { id: true },
+            });
+            if (!assignedClass) return res.status(403).json({ message: "You are not assigned to this student" });
+        }
+
+        const feeSummary = req.user.role === "TEACHER" ? [] : student.feeDetails.map((fee) => {
             const totalPaid = fee.payments.filter(p => p.status === "SUCCESS").reduce((sum, p) => sum + Number(p.amount), 0);
 
             return {
