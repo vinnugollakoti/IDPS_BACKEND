@@ -12,15 +12,43 @@ const dayStart = (value?: string) => {
   return new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
 };
 const userId = (user: any) => Number(user?.userId ?? user?.id);
+const assignedTeacherClassIds = async (req: AuthRequest) => {
+  if (req.user.role !== "TEACHER") return null;
+  const teacher = await prisma.teacher.findUnique({
+    where: { userId: userId(req.user) },
+    select: { id: true },
+  });
+  if (!teacher) return [];
+  const classes = await prisma.class.findMany({
+    where: {
+      OR: [
+        { teacherId: teacher.id },
+        { teachers: { some: { teacherId: teacher.id } } },
+      ],
+    },
+    select: { id: true },
+  });
+  return classes.map((item) => item.id);
+};
 
 router.post("/batch-sync", auth, async (req: AuthRequest, res: Response) => {
   try {
     if (!isStaffRole(req.user.role)) return res.status(403).json({ message: "Only school staff can record attendance" });
+    const teacherClassIds = await assignedTeacherClassIds(req);
+    if (req.user.role === "TEACHER" && !teacherClassIds?.length) {
+      return res.status(403).json({ message: "You must be assigned to a class before recording attendance" });
+    }
     const items = Array.isArray(req.body?.items) ? req.body.items : [];
     if (!items.length) return res.json({ message: "Nothing to sync", data: { synced: 0, syncedCodes: [] } });
     const teacher = await prisma.teacher.findUnique({ where: { userId: userId(req.user) }, select: { id: true } });
     const codes: string[] = [...new Set<string>(items.map((item: any) => String(item?.studentCode || "").trim().toUpperCase()).filter(Boolean))];
-    const students = await prisma.student.findMany({ where: { studentCode: { in: codes } }, select: { id: true, studentCode: true, classId: true } });
+    const students = await prisma.student.findMany({
+      where: {
+        studentCode: { in: codes },
+        ...(req.user.role === "TEACHER" ? { classId: { in: teacherClassIds || [] } } : {}),
+      },
+      select: { id: true, studentCode: true, classId: true },
+    });
     const studentsByCode = new Map(students.map((student) => [student.studentCode?.toUpperCase(), student]));
     const grouped = new Map<string, { classId: number; date: Date; studentId: number; code: string }[]>();
     for (const item of items) {
@@ -65,8 +93,29 @@ router.get("/analytics", auth, async (req: AuthRequest, res: Response) => {
     if (!isStaffRole(req.user.role)) return res.status(403).json({ message: "Only school staff can view attendance" });
     const date = dayStart(typeof req.query.date === "string" ? req.query.date : undefined);
     const classId = req.query.classId ? Number(req.query.classId) : null;
-    const students = await prisma.student.findMany({ where: classId ? { classId } : {}, select: { id: true, name: true, studentCode: true, classId: true, class: { select: { name: true, section: true } } } });
-    const sessions = await prisma.attendanceSession.findMany({ where: { date, ...(classId ? { classId } : {}) }, select: { attendances: { where: { status: "PRESENT" }, select: { studentId: true } } } });
+    const teacherClassIds = await assignedTeacherClassIds(req);
+    if (req.user.role === "TEACHER" && !teacherClassIds?.length) {
+      return res.json({ message: "Attendance analytics fetched", data: { total: 0, present: 0, absent: 0, students: [] } });
+    }
+    if (req.user.role === "TEACHER" && classId && !teacherClassIds?.includes(classId)) {
+      return res.status(403).json({ message: "You are not assigned to this class" });
+    }
+    const allowedClassIds = req.user.role === "TEACHER" ? teacherClassIds || [] : null;
+    const students = await prisma.student.findMany({
+      where: classId
+        ? { classId }
+        : allowedClassIds
+          ? { classId: { in: allowedClassIds } }
+          : {},
+      select: { id: true, name: true, studentCode: true, classId: true, class: { select: { name: true, section: true } } },
+    });
+    const sessions = await prisma.attendanceSession.findMany({
+      where: {
+        date,
+        ...(classId ? { classId } : allowedClassIds ? { classId: { in: allowedClassIds } } : {}),
+      },
+      select: { attendances: { where: { status: "PRESENT" }, select: { studentId: true } } },
+    });
     const presentIds = new Set(sessions.flatMap((session) => session.attendances.map((attendance) => attendance.studentId)));
     res.json({ message: "Attendance analytics fetched", data: { total: students.length, present: presentIds.size, absent: Math.max(0, students.length - presentIds.size), students: students.map((student) => ({ ...student, present: presentIds.has(student.id) })) } });
   } catch (error: any) {

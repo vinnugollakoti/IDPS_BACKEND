@@ -374,36 +374,18 @@ router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
         if (!isStaffRole(req.user.role) && req.user.role !== "PARENT") {
             return res.status(401).json({message : "UnAuthorized request"});
         }
+        if (req.user.role === "TEACHER") {
+            return res.status(403).json({message: "Teachers do not have access to fee records"});
+        }
 
         const authUserId = resolveAuthUserId(req.user);
-        const feeCacheKey = `get-fees:${req.user.role}:${authUserId}`;
-        const cachedFees = serverCache.get(feeCacheKey);
-        if (cachedFees) {
-            return res.json({message: "Fetched fees successfully", data: cachedFees});
-        }
 
         // The relation filter also supports ClassTeacher assignments. Keep
         // this typed as an input object because Prisma's generated relation
         // type is not exported consistently across client versions.
         let where: any = {};
 
-        if (req.user.role === "TEACHER") {
-            const teacher = await prisma.teacher.findUnique({
-                where: { userId: authUserId ?? -1 },
-                select: { id: true }
-            });
-            if (!teacher) return res.json({message: "Fetched fees successfully", data: []});
-            where = {
-                student: {
-                    class: {
-                        OR: [
-                            { teacherId: teacher.id },
-                            { teachers: { some: { teacherId: teacher.id } } }
-                        ]
-                    }
-                }
-            };
-        } else if (req.user.role === "PARENT") {
+        if (req.user.role === "PARENT") {
             if (!authUserId) return res.json({message: "Fetched fees successfully", data: []});
             const parent = await prisma.parent.findFirst({
                 where: { userId: authUserId },
@@ -419,6 +401,12 @@ router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
                     }
                 }
             };
+        }
+
+        const feeCacheKey = `get-fees:${req.user.role}:${authUserId}`;
+        const cachedFees = serverCache.get(feeCacheKey);
+        if (cachedFees) {
+            return res.json({message: "Fetched fees successfully", data: cachedFees});
         }
 
         const fees = await prisma.fee.findMany({

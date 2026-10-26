@@ -99,7 +99,6 @@ router.get("/staff", auth, async (req: AuthRequest, res: Response) => {
         if (user.role === "PRINCIPAL" || user.role === "DIRECTOR" || user.role === "CHAIRMAN") {
           allowedModules = [
             "students",
-            "fees",
             "circulars",
             "exams",
             "classes",
@@ -119,6 +118,7 @@ router.get("/staff", auth, async (req: AuthRequest, res: Response) => {
         } else if (user.role === "TEACHER") {
           allowedModules = [
             "students",
+            "fees",
             "circulars",
             "exams",
             "classes",
