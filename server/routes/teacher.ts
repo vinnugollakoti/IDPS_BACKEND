@@ -5,6 +5,15 @@ import { parseTeacherSelfie, uploadTeacherAttendanceSelfie } from "../lib/supaba
 
 const router = express.Router();
 
+// Attendance is paused. Short-circuit every attendance route before auth/data
+// lookups so accidental client calls cannot query Postgres or Supabase Storage.
+router.use("/attendance", (_req, res, next) => {
+    if (process.env.TEACHER_ATTENDANCE_ENABLED !== "true") {
+        return res.status(503).json({ message: "Teacher attendance is currently unavailable" });
+    }
+    next();
+});
+
 const resolveAuthUserId = (user: any) => {
     const value = Number(user?.userId ?? user?.id);
     return Number.isFinite(value) && value > 0 ? value : null;
