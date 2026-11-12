@@ -91,7 +91,6 @@ const checkMailService = (): ServiceHealth => {
 const checkSupabaseStorage = async (): Promise<ServiceHealth> => {
     const supabaseUrl = normalizeSupabaseUrl();
     const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-    const bucketAttendance = process.env.SUPABASE_TEACHER_ATTENDANCE_BUCKET ?? "teacher-attendance";
     const bucketProfiles = process.env.SUPABASE_USER_PROFILES_BUCKET ?? "user-profiles";
 
     if (!supabaseUrl || !serviceRoleKey) {
@@ -108,35 +107,28 @@ const checkSupabaseStorage = async (): Promise<ServiceHealth> => {
     try {
         const controller = new AbortController();
         const timeout = setTimeout(() => controller.abort(), 4000);
-        const [resAtt, resProf] = await Promise.all([
-            fetch(`${supabaseUrl}/storage/v1/bucket/${bucketAttendance}`, {
-                method: "GET",
-                headers: { Authorization: `Bearer ${serviceRoleKey}`, apikey: serviceRoleKey },
-                signal: controller.signal
-            }).catch(() => null),
-            fetch(`${supabaseUrl}/storage/v1/bucket/${bucketProfiles}`, {
-                method: "GET",
-                headers: { Authorization: `Bearer ${serviceRoleKey}`, apikey: serviceRoleKey },
-                signal: controller.signal
-            }).catch(() => null)
-        ]);
+        // Teacher attendance is on hold. Do not probe its Storage bucket from health checks.
+        const resProf = await fetch(`${supabaseUrl}/storage/v1/bucket/${bucketProfiles}`, {
+            method: "GET",
+            headers: { Authorization: `Bearer ${serviceRoleKey}`, apikey: serviceRoleKey },
+            signal: controller.signal
+        }).catch(() => null);
         clearTimeout(timeout);
 
-        const attOk = resAtt?.ok ?? false;
         const profOk = resProf?.ok ?? false;
 
-        if (!attOk && !profOk) {
+        if (!profOk) {
             return {
                 status: "down",
-                message: "Supabase Storage buckets check failed",
-                details: { bucketAttendance: attOk, bucketProfiles: profOk }
+                message: "Supabase Storage bucket check failed",
+                details: { bucketProfiles: profOk }
             };
         }
 
         return {
             status: "up",
-            message: "Supabase Storage buckets are reachable",
-            details: { bucketAttendance: attOk, bucketProfiles: profOk }
+            message: "Supabase Storage bucket is reachable",
+            details: { bucketProfiles: profOk }
         };
     } catch (err) {
         return {
@@ -197,7 +189,17 @@ const getHealthCheckResponse = async (_req: Request, res: Response) => {
 };
 
 app.get("/health-check", getHealthCheckResponse);
-app.get("/health", getHealthCheckResponse);
+// Lightweight liveness endpoint used by clients to check API reachability.
+// Keep it free of database and Supabase Storage calls so reconnect events do
+// not fan out into repeated dependency checks.
+app.get("/health", (_req: Request, res: Response) => {
+    return res.status(200).json({
+        status: "healthy",
+        message: "Backend server is live",
+        timestamp: new Date().toISOString(),
+        uptimeSeconds: Math.floor(process.uptime()),
+    });
+});
 app.get("/health/database", async (_req: Request, res: Response) => {
     const database = await checkDatabase();
     return res.status(database.status === "up" ? 200 : 503).json({

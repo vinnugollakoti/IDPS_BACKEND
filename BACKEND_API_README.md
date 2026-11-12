@@ -19,6 +19,16 @@ Use the deployed server URL or local server URL:
 http://localhost:<PORT>
 ```
 
+## Health Endpoints
+
+| Method | Path | Behavior |
+|---|---|---|
+| `GET` | `/health` | Lightweight liveness check. Returns server status without querying Postgres or Supabase Storage. Safe for frequent client connectivity checks. |
+| `GET` | `/health-check` | Detailed dependency check. Queries the database and checks the active user-profile Storage bucket. Teacher-attendance Storage is not probed. Use for deliberate diagnostics, not frequent polling. |
+| `GET` | `/health/database` | Explicit database connectivity diagnostic (`SELECT 1`). |
+
+Teacher-attendance bucket checks were removed from health diagnostics because that feature is paused.
+
 ## Mounted Routers
 
 | Mount path | Source file | Status |
@@ -1357,6 +1367,8 @@ Errors:
 
 These routes are mounted at `/teacher`.
 
+**Status: on hold.** Set `TEACHER_ATTENDANCE_ENABLED=true` to enable these routes intentionally. By default, all `/teacher/attendance` requests return `503` before authentication/profile lookup, database access, or Supabase Storage upload.
+
 ## Supabase Environment Variables
 
 Teacher attendance selfie upload uses Supabase Storage directly.
@@ -1366,12 +1378,14 @@ SUPABASE_URL=https://<project-ref>.supabase.co
 SUPABASE_SERVICE_ROLE_KEY=<service-role-key>
 SUPABASE_TEACHER_ATTENDANCE_BUCKET=teacher-attendance
 TEACHER_ATTENDANCE_MAX_IMAGE_BYTES=5242880
+TEACHER_ATTENDANCE_ENABLED=true
 ```
 
 Notes:
 
 - `SUPABASE_TEACHER_ATTENDANCE_BUCKET` defaults to `teacher-attendance`.
 - `TEACHER_ATTENDANCE_MAX_IMAGE_BYTES` defaults to `5MB`.
+- `TEACHER_ATTENDANCE_ENABLED` defaults to disabled; omit it while the feature is on hold.
 - The bucket must exist in Supabase Storage.
 - `selfieUrl` is saved as a public object URL. If the bucket is private, use `selfiePath` to create signed URLs from Supabase.
 
