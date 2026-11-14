@@ -172,7 +172,7 @@ router.post("/create-teacher", auth, async(req: AuthRequest, res: Response) => {
 
 router.delete("/delete-teacher/:id", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
+        if (!isExecutiveRole(req.user.role)) {
             return res.status(400).json({message : "UnAuthorized area"});
         }
 
@@ -561,6 +561,9 @@ router.put("/update-teacher/:id", auth, async (req: AuthRequest, res: Response) 
         }
 
         const { name, email, phone, gender, salary, photo, photoBase64, photoMimeType } = req.body;
+        if (req.user.role === "RECEPTIONIST" && salary !== undefined) {
+            return res.status(403).json({ message: "Receptionists cannot change teacher salary or compensation data" });
+        }
         const teacherId = Number(req.params.id);
 
         const teacher = await prisma.teacher.findUnique({

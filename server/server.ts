@@ -1,5 +1,6 @@
 import express, { Request, Response } from "express";
 import cors from "cors";
+import helmet from "helmet";
 import dotenv from "dotenv";
 import AuthRouter from "./routes/auth"
 import ClassRouter from "./routes/class"
@@ -21,13 +22,28 @@ dotenv.config();
 
 const app = express();
 app.disable("etag");
+app.use(helmet());
 app.use((_req, res, next) => {
     res.setHeader("Cache-Control", "no-store, no-cache, must-revalidate, proxy-revalidate");
     res.setHeader("Pragma", "no-cache");
     res.setHeader("Expires", "0");
     next();
 });
-app.use(cors());
+const configuredOrigins = (process.env.CORS_ORIGINS || "https://idpskovvur.vercel.app")
+    .split(",")
+    .map((origin) => origin.trim())
+    .filter(Boolean);
+app.use(cors({
+    origin: (origin, callback) => {
+        // Native clients do not send an Origin header. Browser clients must
+        // use an explicitly configured school application origin.
+        if (!origin || configuredOrigins.includes(origin)) return callback(null, true);
+        return callback(new Error("Origin is not allowed by CORS"));
+    },
+    credentials: false,
+    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    allowedHeaders: ["Content-Type", "Authorization"],
+}));
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ limit: "5mb", extended: true }));
 

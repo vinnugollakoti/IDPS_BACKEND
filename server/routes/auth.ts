@@ -5,6 +5,7 @@ import prisma from "../prisma/client";
 import { AuthRequest, auth } from "../middleware/auth";
 import {sendMOtpail} from "../mailer/mail"
 import { generateToken } from "../middleware/jwt";
+import { authRateLimit } from "../middleware/authRateLimit";
 const router = express.Router();
 
 const verifyReviewerPassword = (password: string, stored: string) => {
@@ -18,7 +19,7 @@ const verifyReviewerPassword = (password: string, stored: string) => {
 // Dedicated reusable Play reviewer login. Credentials stay on the server and
 // never ship inside the Android/PWA bundle. Configure both values in Render:
 // PLAY_REVIEW_EMAIL and PLAY_REVIEW_PASSWORD_HASH (salt:hex scrypt hash).
-router.post("/play-review-login", async (req: Request, res: Response) => {
+router.post("/play-review-login", authRateLimit({ action: "review-login", windowMs: 15 * 60 * 1000, max: 10 }), async (req: Request, res: Response) => {
     try {
         const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
         const password = typeof req.body?.password === "string" ? req.body.password : "";
@@ -42,7 +43,7 @@ router.post("/play-review-login", async (req: Request, res: Response) => {
     }
 });
 
-router.post("/login", async( req: Request, res: Response) => {
+router.post("/login", authRateLimit({ action: "otp-request", windowMs: 15 * 60 * 1000, max: 5 }), async( req: Request, res: Response) => {
     try {
 
         const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
@@ -82,7 +83,7 @@ router.post("/login", async( req: Request, res: Response) => {
     }
 })
 
-router.post("/otp-verify", async(req: Request, res: Response) => {
+router.post("/otp-verify", authRateLimit({ action: "otp-verify", windowMs: 10 * 60 * 1000, max: 10 }), async(req: Request, res: Response) => {
     try {
         const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
         const otp = typeof req.body?.otp === "string" ? req.body.otp.trim() : "";

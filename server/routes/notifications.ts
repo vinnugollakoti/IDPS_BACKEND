@@ -59,7 +59,7 @@ router.post("/register-token", auth, async (req: AuthRequest, res: Response) => 
     }
 
     const cleanToken = token.trim();
-    console.log(`[Register Token] userId=${userId} token=${cleanToken} platform=${platform}`);
+    console.log(`[Register Token] userId=${userId} platform=${platform || "android"}`);
 
     const pushToken = await prisma.pushToken.upsert({
       where: { token: cleanToken },
@@ -141,12 +141,16 @@ router.post("/upload-image", auth, async (req: AuthRequest, res: Response) => {
 
 router.get("/tokens", auth, async (req: AuthRequest, res: Response) => {
   try {
+    if (!isExecutiveRole(req.user.role)) {
+      return res.status(403).json({ message: "Only executive administrators can inspect notification delivery records." });
+    }
     const audience = (req.query.audience as string ?? "BOTH").toUpperCase();
     if (!["PARENTS", "TEACHERS", "BOTH"].includes(audience)) {
       return res.status(400).json({ message: "audience must be PARENTS, TEACHERS, or BOTH" });
     }
     const tokens = await fetchTokensByAudience(audience as any);
-    res.json({ message: `Found ${tokens.length} token(s) for "${audience}"`, data: tokens });
+    // Never expose raw mobile tokens or Web Push subscription keys over the API.
+    res.json({ message: `Found ${tokens.length} token(s) for "${audience}"`, data: { count: tokens.length } });
   } catch (err: any) {
     console.error("[GET /tokens Error]:", err?.message);
     res.status(500).json({ message: "Failed to fetch tokens", error: err?.message });
