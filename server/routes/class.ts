@@ -13,7 +13,7 @@ const resolveAuthUserId = (user: any) => {
 
 router.post("/create-class", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
+        if (!isExecutiveRole(req.user.role)) {
             return res.status(400).json({message : "UnAuthorized request"});
         }
 
@@ -617,7 +617,7 @@ router.put("/update-subject-classes/:id", auth, async(req: AuthRequest, res: Res
 
 router.delete("/delete-class/:id", auth, async (req: AuthRequest, res: Response) => {
     try {
-        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
+        if (!isExecutiveRole(req.user.role)) {
             return res.status(400).json({ message: "UnAuthorized request" });
         }
 

@@ -1745,6 +1745,26 @@ router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res:
             return res.status(400).json({message: "Invalid student id"});
         }
 
+        // Authorize class membership before loading the full record. This
+        // prevents a teacher from probing or retrieving another class's PII.
+        if (req.user.role === "TEACHER") {
+            const authUserId = resolveAuthUserId(req.user);
+            const teacher = await prisma.teacher.findUnique({
+                where: { userId: authUserId ?? -1 },
+                select: { id: true },
+            });
+            const requestedStudent = await prisma.student.findUnique({ where: { id: studentId }, select: { classId: true } });
+            if (!teacher || !requestedStudent) return res.status(403).json({ message: "You are not assigned to this student" });
+            const assignedClass = await prisma.class.findFirst({
+                where: {
+                    id: requestedStudent.classId,
+                    OR: [{ teacherId: teacher.id }, { teachers: { some: { teacherId: teacher.id } } }],
+                },
+                select: { id: true },
+            });
+            if (!assignedClass) return res.status(403).json({ message: "You are not assigned to this student" });
+        }
+
         if (req.user.role === "PARENT") {
             const authUserId = resolveAuthUserId(req.user);
             if (!authUserId) {
@@ -1775,7 +1795,7 @@ router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res:
             }
         }
 
-        const student = await prisma.student.findUnique({
+        const student: any = await prisma.student.findUnique({
             where: {id: studentId},
             include: {
                 class: {
@@ -1795,7 +1815,7 @@ router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res:
                         }
                     }
                 },
-                feeDetails: {
+                ...(req.user.role === "TEACHER" ? {} : { feeDetails: {
                     include: {
                         payments: {
                             include: {
@@ -1803,7 +1823,7 @@ router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res:
                             }
                         }
                     }
-                },
+                } }),
 
                 attendances: {
                     orderBy: { createdAt: "desc" },
@@ -1834,28 +1854,8 @@ router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res:
             return res.status(400).json({message: "Student not existed"});
         }
 
-        if (req.user.role === "TEACHER") {
-            const authUserId = resolveAuthUserId(req.user);
-            const teacher = await prisma.teacher.findUnique({
-                where: { userId: authUserId ?? -1 },
-                select: { id: true },
-            });
-            if (!teacher) return res.status(403).json({ message: "You are not assigned to this student" });
-            const assignedClass = await prisma.class.findFirst({
-                where: {
-                    id: student.classId,
-                    OR: [
-                        { teacherId: teacher.id },
-                        { teachers: { some: { teacherId: teacher.id } } },
-                    ],
-                },
-                select: { id: true },
-            });
-            if (!assignedClass) return res.status(403).json({ message: "You are not assigned to this student" });
-        }
-
-        const feeSummary = req.user.role === "TEACHER" ? [] : student.feeDetails.map((fee) => {
-            const totalPaid = fee.payments.filter(p => p.status === "SUCCESS").reduce((sum, p) => sum + Number(p.amount), 0);
+        const feeSummary = req.user.role === "TEACHER" ? [] : student.feeDetails.map((fee: any) => {
+            const totalPaid = fee.payments.filter((p: any) => p.status === "SUCCESS").reduce((sum: number, p: any) => sum + Number(p.amount), 0);
 
             return {
                 ...fee,
@@ -1864,6 +1864,18 @@ router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res:
             }
         });
 
+        if (req.user.role === "TEACHER") {
+            const { adharnumber: _studentAadhaar, ...safeStudent } = student as any;
+            const safeParents = Array.isArray(safeStudent.parents)
+                ? safeStudent.parents.map((link: any) => {
+                    const { parent, ...safeLink } = link;
+                    if (!parent) return safeLink;
+                    const { adharnumber: _parentAadhaar, ...safeParent } = parent;
+                    return { ...safeLink, parent: safeParent };
+                })
+                : [];
+            return res.json({ message: "Details fetched successfully", data: { ...safeStudent, parents: safeParents, feeDetails: [] } });
+        }
         res.json({message: "Details fetched successfully", data: {...student, feeDetails: feeSummary}})
     } catch(err) {
         console.log(err)

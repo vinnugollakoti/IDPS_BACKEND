@@ -262,7 +262,7 @@ router.get("/get-marks", auth, async(req: AuthRequest, res: Response) => {
             });
             if (!teacher) return res.json({message: "Fetched marks successfully", data: []});
             const teacherClasses = await prisma.class.findMany({
-                where: { teacherId: teacher.id },
+                where: { OR: [{ teacherId: teacher.id }, { teachers: { some: { teacherId: teacher.id } } }] },
                 select: { id: true }
             });
             const classIds = teacherClasses.map((c) => c.id);
@@ -283,7 +283,9 @@ router.get("/get-marks", auth, async(req: AuthRequest, res: Response) => {
         const marks = await prisma.mark.findMany({
             where,
             include : {
-                student: true,
+                student: req.user.role === "TEACHER"
+                    ? { select: { id: true, name: true, studentCode: true, classId: true, class: { select: { id: true, name: true, section: true } } } }
+                    : true,
                 exam: true
             }
         })
@@ -530,8 +532,24 @@ router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
             }
         });
 
-        serverCache.set(studentCacheKey, students, 30);
-        return res.json({ message: "Fetched students successfully", data: students });
+        const safeStudents = req.user.role === "TEACHER"
+            ? students.map((student: any) => {
+                const { adharnumber: _studentAadhaar, ...safeStudent } = student;
+                return {
+                    ...safeStudent,
+                    parents: Array.isArray(student.parents)
+                        ? student.parents.map((link: any) => {
+                            const { parent, ...safeLink } = link;
+                            if (!parent) return safeLink;
+                            const { adharnumber: _parentAadhaar, ...safeParent } = parent;
+                            return { ...safeLink, parent: safeParent };
+                        })
+                        : [],
+                };
+            })
+            : students;
+        serverCache.set(studentCacheKey, safeStudents, 30);
+        return res.json({ message: "Fetched students successfully", data: safeStudents });
     } catch (err) {
         console.log(err);
         return res.status(400).json({ message: "Error in fetching students" });
