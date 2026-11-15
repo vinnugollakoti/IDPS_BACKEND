@@ -14,6 +14,7 @@ import NotificationsRouter from "./routes/notifications"
 import PermissionRouter from "./routes/permission"
 import HomeworkRouter from "./routes/homework"
 import ExpensesRouter from "./routes/expenses"
+import ParentRouter from "./routes/parent"
 import prisma from "./prisma/client";
 import { serverCache } from "./utils/cache";
 import { AuthRequest, auth, isExecutiveRole } from "./middleware/auth";
@@ -234,6 +235,7 @@ app.use("/student", StudentRouter);
 app.use("/teacher", TeacherRouter);
 app.use("/get", GetRouter);
 app.use("/notifications", NotificationsRouter);
+app.use("/parent", ParentRouter);
 app.use("/permission", PermissionRouter);
 app.use("/homework", HomeworkRouter);
 app.use("/expenses", ExpensesRouter);
