@@ -27,6 +27,7 @@ model Parent {
   user   User @relation(fields: [userId], references: [id])
 
   students ParentStudent[]
+  leaveRequests LeaveRequest[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -72,6 +73,8 @@ model Student {
   feeDetails  Fee[]
   marks       Mark[]
   attendances Attendance[]
+  leaveRequests LeaveRequest[]
+  complaints Complaint[]
 
   @@index([classId])
 }
@@ -114,6 +117,8 @@ model Teacher {
   timetable       TimeTable[]
   attendanceTaken AttendanceSession[]
   attendances     TeacherAttendance[]
+  assignedLeaveRequests LeaveRequest[]
+  assignedComplaints Complaint[]
 
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
@@ -202,6 +207,11 @@ model Complaint {
   parentName  String?
   parentPhone String?
   response    String?
+  studentId   Int?
+  student     Student? @relation(fields: [studentId], references: [id], onDelete: SetNull)
+  recipientType ComplaintRecipient @default(PRINCIPAL)
+  assignedTeacherId Int?
+  assignedTeacher Teacher? @relation(fields: [assignedTeacherId], references: [id], onDelete: SetNull)
   createdAt   DateTime @default(now())
   updatedAt   DateTime @updatedAt
   submittedById Int?
@@ -210,6 +220,29 @@ model Complaint {
   @@index([status])
   @@index([createdAt])
   @@index([submittedById])
+  @@index([studentId])
+  @@index([assignedTeacherId])
+}
+
+model LeaveRequest {
+  id Int @id @default(autoincrement())
+  studentId Int
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  parentId Int
+  parent Parent @relation(fields: [parentId], references: [id], onDelete: Cascade)
+  assignedTeacherId Int
+  assignedTeacher Teacher @relation(fields: [assignedTeacherId], references: [id], onDelete: Restrict)
+  startDate DateTime @db.Date
+  endDate DateTime @db.Date
+  reason String
+  status LeaveRequestStatus @default(PENDING)
+  teacherResponse String?
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+
+  @@index([studentId, startDate])
+  @@index([parentId, createdAt])
+  @@index([assignedTeacherId, status])
 }
 
 enum ComplaintMode {
@@ -226,6 +259,15 @@ enum ComplaintStatus {
   IN_REVIEW
   RESOLVED
   CLOSED
+}
+enum ComplaintRecipient {
+  CLASS_TEACHER
+  PRINCIPAL
+}
+enum LeaveRequestStatus {
+  PENDING
+  APPROVED
+  REJECTED
 }
 
 model UserPermission {

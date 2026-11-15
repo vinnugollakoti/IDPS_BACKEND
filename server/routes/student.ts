@@ -1834,6 +1834,7 @@ router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res:
                 },
 
                 marks: {
+                    ...(req.user.role === "PARENT" ? { where: { exam: { isReleased: true } } } : {}),
                     include: {
                         exam: {
                             include: {

@@ -19,6 +19,7 @@ router.get("/get-exams", auth, async(req: AuthRequest, res: Response) => {
         const authUserId = resolveAuthUserId(req.user);
 
         let classIds: number[] | null = null;
+        let parentStudentIds: number[] | null = null;
         if (req.user.role === "TEACHER") {
             const teacher = await prisma.teacher.findUnique({
                 where: { userId: authUserId ?? -1 },
@@ -47,6 +48,7 @@ router.get("/get-exams", auth, async(req: AuthRequest, res: Response) => {
                 select: { studentId: true }
             });
             const studentIds = parentStudents.map((p) => p.studentId);
+            parentStudentIds = studentIds;
             if (studentIds.length === 0) return res.json({message: "Fetched Exams", data: []});
             const parentClasses = await prisma.student.findMany({
                 where: { id: { in: studentIds } },
@@ -61,6 +63,7 @@ router.get("/get-exams", auth, async(req: AuthRequest, res: Response) => {
                 subject: true,
                 class: true,
                 marks: {
+                    where: req.user.role === "PARENT" ? { studentId: { in: parentStudentIds || [] }, exam: { isReleased: true } } : undefined,
                     include: {
                         student: {
                             select: {
