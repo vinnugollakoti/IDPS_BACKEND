@@ -3,7 +3,6 @@ import prisma from "../prisma/client";
 import { AuthRequest, auth } from "../middleware/auth";
 import { isExecutiveRole } from "../middleware/auth";
 import webpush, { PushSubscription } from "web-push";
-import { isBusTripWindowOpen } from "../utils/busTripSchedule";
 import { serverCache } from "../utils/cache";
 
 const router = express.Router();
@@ -87,7 +86,7 @@ router.put("/admin/buses/:busId/assignment", async (req: AuthRequest, res: Respo
     const bus = await prisma.bus.findUnique({ where: { id: busId } });
     if (!bus) return res.status(404).json({ message: "Bus not found" });
     const activeTrip = await prisma.busTrip.findFirst({ where: { busId, status: "ACTIVE" }, select: { id: true, period: true, lastPingAt: true } });
-    if (activeTrip && (!isBusTripWindowOpen(activeTrip.period) || Date.now() - activeTrip.lastPingAt.getTime() > 90_000)) {
+    if (activeTrip && Date.now() - activeTrip.lastPingAt.getTime() > 90_000) {
       await prisma.busTrip.updateMany({ where: { id: activeTrip.id, status: "ACTIVE" }, data: { status: "EXPIRED", endedAt: new Date() } });
     } else if (activeTrip) return res.status(409).json({ message: "End the active bus trip before changing its driver" });
     const user = email ? await prisma.user.findUnique({ where: { email }, include: { driver: true } }) : null;
@@ -103,7 +102,7 @@ router.get("/assignment", async (req: AuthRequest, res: Response) => {
     const bus = await assignedBus(req);
     if (!bus) return res.status(404).json({ message: "No bus is assigned to this driver account" });
     let activeTrip = await prisma.busTrip.findFirst({ where: { busId: bus.id, status: "ACTIVE" }, orderBy: { startedAt: "desc" } });
-    if (activeTrip && (!isBusTripWindowOpen(activeTrip.period) || Date.now() - activeTrip.lastPingAt.getTime() > 90_000)) {
+    if (activeTrip && Date.now() - activeTrip.lastPingAt.getTime() > 90_000) {
       await prisma.busTrip.updateMany({ where: { id: activeTrip.id, status: "ACTIVE" }, data: { status: "EXPIRED", endedAt: new Date() } });
       activeTrip = null;
     }
@@ -117,7 +116,6 @@ router.post("/trips/start", async (req: AuthRequest, res: Response) => {
     if (!bus) return res.status(403).json({ message: "This driver account has no assigned bus" });
     const period = req.body?.period;
     if (!["MORNING", "EVENING"].includes(period) || !validPoint(req.body)) return res.status(400).json({ message: "Select a trip period and provide a valid starting location" });
-    if (!isBusTripWindowOpen(period)) return res.status(403).json({ message: "Trips can only start during school transport hours" });
     await prisma.busTrip.updateMany({ where: { busId: bus.id, status: "ACTIVE", OR: [{ lastPingAt: { lt: new Date(Date.now() - 90_000) } }, { period: "MORNING", startedAt: { lt: new Date(Date.now() - 6 * 60 * 60 * 1000) } }, { period: "EVENING", startedAt: { lt: new Date(Date.now() - 8 * 60 * 60 * 1000) } }] }, data: { status: "EXPIRED", endedAt: new Date() } });
     if (await prisma.busTrip.findFirst({ where: { busId: bus.id, status: "ACTIVE" } })) return res.status(409).json({ message: "This bus already has an active trip" });
     const trip = await prisma.busTrip.create({ data: { busId: bus.id, driverUserId: userId(req), period, status: "ACTIVE", latitude: req.body.latitude, longitude: req.body.longitude, ...gpsMetadata(req.body) } });
@@ -149,10 +147,6 @@ router.post("/trips/:tripId/location", async (req: AuthRequest, res: Response) =
     if (!validPoint(req.body)) return res.status(400).json({ message: "Provide a valid GPS location" });
     const trip = await prisma.busTrip.findFirst({ where: { id, busId: bus.id, driverUserId: userId(req), status: "ACTIVE" } });
     if (!trip) return res.status(404).json({ message: "Active trip not found" });
-    if (!isBusTripWindowOpen(trip.period)) {
-      await prisma.busTrip.updateMany({ where: { id, status: "ACTIVE" }, data: { status: "EXPIRED", endedAt: new Date() } });
-      return res.status(410).json({ message: "The transport window ended. Location sharing has stopped." });
-    }
     if (Date.now() - trip.lastPingAt.getTime() < 4_500) return res.status(429).json({ message: "Location updates must be at least five seconds apart" });
     const location = { latitude: req.body.latitude, longitude: req.body.longitude, ...gpsMetadata(req.body), recordedAt: new Date() };
     await prisma.busTrip.update({ where: { id }, data: { lastPingAt: location.recordedAt, latitude: location.latitude, longitude: location.longitude, accuracy: location.accuracy, heading: location.heading, speed: location.speed } });
