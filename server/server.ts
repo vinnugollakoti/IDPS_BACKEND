@@ -16,6 +16,7 @@ import HomeworkRouter from "./routes/homework"
 import ExpensesRouter from "./routes/expenses"
 import ParentRouter from "./routes/parent"
 import DriverTripsRouter from "./routes/driverTrips"
+import BusesRouter from "./routes/buses"
 import prisma from "./prisma/client";
 import { serverCache } from "./utils/cache";
 import { AuthRequest, auth, isExecutiveRole } from "./middleware/auth";
@@ -224,6 +225,7 @@ app.use("/get", GetRouter);
 app.use("/notifications", NotificationsRouter);
 app.use("/parent", ParentRouter);
 app.use("/driver", DriverTripsRouter);
+app.use("/bus", BusesRouter);
 app.use("/permission", PermissionRouter);
 app.use("/homework", HomeworkRouter);
 app.use("/expenses", ExpensesRouter);

@@ -206,9 +206,10 @@ router.get("/get-teachers", auth, async(req: AuthRequest, res: Response) => {
 
         const teachers = await prisma.teacher.findMany({
             include: {
-                user: true,
-                classes: true,
-                timetable: true
+                user: { select: { id: true, name: true, email: true, gender: true } },
+                classes: { select: { id: true, name: true, section: true } },
+                assignedClasses: { select: { class: { select: { id: true, name: true, section: true } } } },
+                _count: { select: { assignedClasses: true, timetable: true } }
             }
         })
 
@@ -252,7 +253,8 @@ router.get("/get-buses", auth, async (req: AuthRequest, res: Response) => {
         }
         const buses = await prisma.bus.findMany({
             include: {
-                _count: { select: { students: true } }
+                _count: { select: { students: true } },
+                driverUser: { select: { id: true, name: true, email: true, driver: { select: { id: true, phone: true, photo: true } } } }
             },
             orderBy: { id: "asc" }
         });
