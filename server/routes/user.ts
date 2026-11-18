@@ -113,7 +113,10 @@ router.post("/create-teacher", auth, async(req: AuthRequest, res: Response) => {
             return res.status(400).json({message : "User with this email already exists"});
         }
 
-        const tGender: any = gender === 'FEMALE' ? 'FEMALE' : 'MALE';
+        if (gender !== 'MALE' && gender !== 'FEMALE') {
+            return res.status(400).json({ message: "Select a valid teacher gender" });
+        }
+        const tGender = gender;
         let photoUrl: string | null = photo && typeof photo === 'string' && photo.startsWith('http') ? photo : null;
 
         if (!photoUrl && photoBase64) {
@@ -269,6 +272,13 @@ router.post("/create-student", auth, async( req: AuthRequest, res: Response) => 
 
         if (!name || !gender || !classId) {
             return res.status(400).json({message: "Missing required fields: name, gender, and classId are required"});
+        }
+
+        if (busId !== undefined && busId !== null && busId !== "") {
+            const parsedBusId = Number(busId);
+            if (!Number.isSafeInteger(parsedBusId) || parsedBusId < 1 || !await prisma.bus.findUnique({ where: { id: parsedBusId }, select: { id: true } })) {
+                return res.status(400).json({ message: "Selected bus does not exist" });
+            }
         }
 
         let parentConnectArray: any[] = [];
@@ -499,6 +509,13 @@ router.put("/update-student/:id", auth, async (req: AuthRequest, res: Response) 
 
         const { photo, name, gender, dob, classId, busId, admissionno, adharnumber, mothertongue, socialcategory, bloodgroup, address, pincode, height, weight } = req.body;
         const studentId = Number(req.params.id);
+        if (!Number.isSafeInteger(studentId) || studentId < 1) return res.status(400).json({ message: "Invalid student id" });
+        if (busId !== undefined && busId !== null && busId !== "") {
+            const parsedBusId = Number(busId);
+            if (!Number.isSafeInteger(parsedBusId) || parsedBusId < 1 || !await prisma.bus.findUnique({ where: { id: parsedBusId }, select: { id: true } })) {
+                return res.status(400).json({ message: "Selected bus does not exist" });
+            }
+        }
 
         let parsedDob: Date | null | undefined = undefined;
         if (dob !== undefined) {
@@ -550,6 +567,50 @@ router.put("/update-student/:id", auth, async (req: AuthRequest, res: Response) 
     }
 })
 
+
+router.put("/assign-teacher-classes/:id", auth, async (req: AuthRequest, res: Response) => {
+    if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
+        return res.status(403).json({ message: "You are not allowed to manage teacher class assignments" });
+    }
+    const teacherId = Number(req.params.id);
+    const classIds: number[] | null = Array.isArray(req.body?.classIds)
+        ? [...new Set((req.body.classIds as unknown[]).map((value) => Number(value)))]
+        : null;
+    if (!Number.isSafeInteger(teacherId) || teacherId < 1 || !classIds || classIds.some((id: number) => !Number.isSafeInteger(id) || id < 1)) {
+        return res.status(400).json({ message: "Provide a teacher id and a list of valid class ids" });
+    }
+    try {
+        const teacher = await prisma.teacher.findUnique({ where: { id: teacherId }, select: { id: true } });
+        if (!teacher) return res.status(404).json({ message: "Teacher not found" });
+        const classes = await prisma.class.findMany({ where: { id: { in: classIds } }, select: { id: true } });
+        if (classes.length !== classIds.length) return res.status(400).json({ message: "One or more selected classes do not exist" });
+        await prisma.$transaction(async (tx) => {
+            const prior = await tx.class.findMany({
+                where: { OR: [{ teacherId }, { teachers: { some: { teacherId } } }] },
+                select: { id: true },
+            });
+            const removedIds = prior.map((item) => item.id).filter((id) => !classIds.includes(id));
+            if (removedIds.length) {
+                await tx.classTeacher.deleteMany({ where: { teacherId, classId: { in: removedIds } } });
+                await tx.class.updateMany({ where: { id: { in: removedIds }, teacherId }, data: { teacherId: null } });
+            }
+            if (classIds.length) {
+                await tx.classTeacher.createMany({ data: classIds.map((classId: number) => ({ classId, teacherId })), skipDuplicates: true });
+                await tx.class.updateMany({ where: { id: { in: classIds }, teacherId: null }, data: { teacherId } });
+            }
+        });
+        void serverCache.clear();
+        const assigned = await prisma.class.findMany({
+            where: { OR: [{ teacherId }, { teachers: { some: { teacherId } } }] },
+            select: { id: true, name: true, section: true },
+            orderBy: [{ name: "asc" }, { section: "asc" }],
+        });
+        return res.json({ message: "Teacher class assignments updated", data: assigned });
+    } catch (error) {
+        console.error("PUT assign teacher classes", error);
+        return res.status(500).json({ message: "Could not update teacher class assignments" });
+    }
+});
 
 router.put("/update-teacher/:id", auth, async (req: AuthRequest, res: Response) => {
     try {
@@ -617,7 +678,7 @@ router.put("/update-teacher/:id", auth, async (req: AuthRequest, res: Response) 
                     ...(name && { name }),
                     ...(phone && { phone }),
                     ...(gender && { gender }),
-                    ...(salary && { salary }),
+                    ...(salary !== undefined && { salary: salary === null || salary === "" ? null : Number(salary) }),
                     ...(photoUrl && { photo: photoUrl })
                 }
             });

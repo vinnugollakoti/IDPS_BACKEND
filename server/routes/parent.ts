@@ -182,7 +182,7 @@ router.get("/transport/:studentId", async (req: AuthRequest, res: Response) => {
     if (!linked) return res.status(403).json({ message: "Student is not linked to this parent account" });
     const bus = linked.student.bus;
     if (!bus) return res.json({ studentId, assigned: false, transport: null });
-    return res.json({ studentId, assigned: true, transport: { busId: bus.id, busNumber: `Bus ${bus.id}`, routeName: bus.route.join(" · "), route: bus.route, driver: { name: bus.driverName, phone: bus.phone } } });
+    return res.json({ studentId, assigned: true, transport: { busId: bus.id, busNumber: bus.busNumber || `Bus ${bus.id}`, routeName: bus.routeName || bus.route.join(" · "), route: bus.route, driver: { name: bus.driverName, phone: bus.phone } } });
   } catch (error) { console.error("GET /parent/transport", error); return res.status(500).json({ message: "Could not fetch transport details" }); }
 });
 

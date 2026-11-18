@@ -136,6 +136,16 @@ model ClassTeacher {
   @@index([teacherId])
 }
 
+model Driver {
+  id        Int      @id @default(autoincrement())
+  phone     String
+  photo     String?
+  userId    Int      @unique
+  user      User     @relation(fields: [userId], references: [id], onDelete: Cascade)
+  createdAt DateTime @default(now())
+  updatedAt DateTime @updatedAt
+}
+
 model TeacherAttendance {
   id Int @id @default(autoincrement())
 
@@ -179,6 +189,7 @@ model User {
 
   parent            Parent?
   teacher           Teacher?
+  driver            Driver?
   assignedBus       Bus?      @relation("AssignedBusDriver")
   verifiedPayments  Payment[]
   feedbacks         Feedback[]
@@ -448,8 +459,10 @@ model TimeTable {
 
 model Bus {
   id         Int       @id @default(autoincrement())
-  driverName String
-  phone      String
+  busNumber  String?   @unique
+  routeName  String?
+  driverName String    @default("Unassigned")
+  phone      String    @default("")
   route      String[]
   students   Student[]
   driverUserId Int?    @unique
@@ -639,6 +652,7 @@ enum Role {
   CHAIRMAN
   RECEPTIONIST
   TEACHER
+  DRIVER
   PARENT
 }
 
