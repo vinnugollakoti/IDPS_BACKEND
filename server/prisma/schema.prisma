@@ -179,6 +179,7 @@ model User {
 
   parent            Parent?
   teacher           Teacher?
+  assignedBus       Bus?      @relation("AssignedBusDriver")
   verifiedPayments  Payment[]
   feedbacks         Feedback[]
   pushTokens        PushToken[]
@@ -451,6 +452,28 @@ model Bus {
   phone      String
   route      String[]
   students   Student[]
+  driverUserId Int?    @unique
+  driverUser User?     @relation("AssignedBusDriver", fields: [driverUserId], references: [id], onDelete: SetNull)
+  trips      BusTrip[]
+}
+
+model BusTrip {
+  id Int @id @default(autoincrement())
+  busId Int
+  bus Bus @relation(fields: [busId], references: [id], onDelete: Cascade)
+  driverUserId Int
+  period BusTripPeriod
+  status BusTripStatus @default(ACTIVE)
+  startedAt DateTime @default(now())
+  endedAt DateTime?
+  lastPingAt DateTime @default(now())
+  latitude Float
+  longitude Float
+  accuracy Float?
+  heading Float?
+  speed Float?
+  @@index([busId, status, startedAt])
+  @@index([lastPingAt])
 }
 
 model Fee {
@@ -617,6 +640,17 @@ enum Role {
   RECEPTIONIST
   TEACHER
   PARENT
+}
+
+enum BusTripPeriod {
+  MORNING
+  EVENING
+}
+
+enum BusTripStatus {
+  ACTIVE
+  ENDED
+  EXPIRED
 }
 
 enum MotherTongue {

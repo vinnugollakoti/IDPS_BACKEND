@@ -15,6 +15,7 @@ import PermissionRouter from "./routes/permission"
 import HomeworkRouter from "./routes/homework"
 import ExpensesRouter from "./routes/expenses"
 import ParentRouter from "./routes/parent"
+import DriverTripsRouter from "./routes/driverTrips"
 import prisma from "./prisma/client";
 import { serverCache } from "./utils/cache";
 import { AuthRequest, auth, isExecutiveRole } from "./middleware/auth";
@@ -30,21 +31,7 @@ app.use((_req, res, next) => {
     res.setHeader("Expires", "0");
     next();
 });
-const configuredOrigins = (process.env.CORS_ORIGINS || "https://idpskovvur.vercel.app")
-    .split(",")
-    .map((origin) => origin.trim())
-    .filter(Boolean);
-app.use(cors({
-    origin: (origin, callback) => {
-        // Native clients do not send an Origin header. Browser clients must
-        // use an explicitly configured school application origin.
-        if (!origin || configuredOrigins.includes(origin)) return callback(null, true);
-        return callback(new Error("Origin is not allowed by CORS"));
-    },
-    credentials: false,
-    methods: ["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
-    allowedHeaders: ["Content-Type", "Authorization"],
-}));
+app.use(cors());
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ limit: "5mb", extended: true }));
 
@@ -236,6 +223,7 @@ app.use("/teacher", TeacherRouter);
 app.use("/get", GetRouter);
 app.use("/notifications", NotificationsRouter);
 app.use("/parent", ParentRouter);
+app.use("/driver", DriverTripsRouter);
 app.use("/permission", PermissionRouter);
 app.use("/homework", HomeworkRouter);
 app.use("/expenses", ExpensesRouter);
