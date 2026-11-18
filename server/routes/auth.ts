@@ -1,5 +1,5 @@
 import express, {Request, Response} from "express";
-import { scryptSync, timingSafeEqual } from "node:crypto";
+import { createHash, scryptSync, timingSafeEqual } from "node:crypto";
 import { randomInt } from "node:crypto";
 import prisma from "../prisma/client";
 import { AuthRequest, auth } from "../middleware/auth";
@@ -7,6 +7,7 @@ import {sendMOtpail} from "../mailer/mail"
 import { generateToken } from "../middleware/jwt";
 import { authRateLimit } from "../middleware/authRateLimit";
 const router = express.Router();
+const parentOtpHash = (email: string, otp: string) => createHash("sha256").update(`${process.env.JWT_SECRET}:${email}:${otp}`).digest("hex");
 
 const verifyReviewerPassword = (password: string, stored: string) => {
     const [salt, encoded] = stored.split(":");
@@ -82,6 +83,56 @@ router.post("/login", authRateLimit({ action: "otp-request", windowMs: 15 * 60 *
         return res.status(400).json({message: "Error executing login request"});
     }
 })
+
+router.post("/parent/email-otp/request", authRateLimit({ action: "parent-email-otp-request", windowMs: 15 * 60 * 1000, max: 5 }), async (req: Request, res: Response) => {
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "Enter a valid email address" });
+    try {
+        const user = await prisma.user.findFirst({ where: { email, role: "PARENT", parent: { isNot: null } }, select: { id: true, email: true } });
+        if (user) {
+            const otp = randomInt(100000, 1000000).toString();
+            const otpExpiry = new Date(Date.now() + 5 * 60 * 1000);
+            await prisma.user.update({ where: { id: user.id }, data: { otp: parentOtpHash(email, otp), otpExpiry } });
+            await sendMOtpail(user.email, otp);
+        }
+        // Keep account existence private; the code is delivered only for a registered parent.
+        return res.json({ message: "If a parent account matches that email, a sign-in code has been sent." });
+    } catch (error) {
+        console.error("POST parent email OTP request", error);
+        return res.json({ message: "If a parent account matches that email, a sign-in code has been sent." });
+    }
+});
+
+router.post("/parent/email-otp/verify", authRateLimit({ action: "parent-email-otp-verify", windowMs: 10 * 60 * 1000, max: 10 }), async (req: Request, res: Response) => {
+    const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
+    const otp = typeof req.body?.otp === "string" ? req.body.otp.trim() : "";
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email) || !/^\d{6}$/.test(otp)) {
+        return res.status(400).json({ message: "Enter the email address and six-digit code" });
+    }
+    try {
+        const user = await prisma.user.findFirst({
+            where: { email, role: "PARENT", parent: { isNot: null } },
+            select: { id: true, name: true, email: true, role: true, otp: true, otpExpiry: true },
+        });
+        const candidateHash = parentOtpHash(email, otp);
+        const storedHash = user?.otp || "";
+        const hashMatches = /^[a-f0-9]{64}$/.test(storedHash)
+            && timingSafeEqual(Buffer.from(storedHash, "hex"), Buffer.from(candidateHash, "hex"));
+        if (!user || !hashMatches || !user.otpExpiry || user.otpExpiry <= new Date()) {
+            return res.status(400).json({ message: "The sign-in code is invalid or expired" });
+        }
+        const consumed = await prisma.user.updateMany({
+            where: { id: user.id, otp: candidateHash, otpExpiry: { gt: new Date() } },
+            data: { otp: null, otpExpiry: null },
+        });
+        if (consumed.count !== 1) return res.status(400).json({ message: "The sign-in code is invalid or expired" });
+        const token = generateToken(user.id, "PARENT");
+        return res.json({ message: "Parent sign-in successful", token, user: { id: user.id, name: user.name, email: user.email, role: "PARENT" } });
+    } catch (error) {
+        console.error("POST parent email OTP verify", error);
+        return res.status(503).json({ message: "We could not verify the sign-in code right now. Please try again." });
+    }
+});
 
 router.post("/otp-verify", authRateLimit({ action: "otp-verify", windowMs: 10 * 60 * 1000, max: 10 }), async(req: Request, res: Response) => {
     try {

@@ -4,12 +4,11 @@ dotenv.config();
 const MAIL_API = process.env.MAIL_API || "none";
 
 async function sendMail(to: string, subject: string, html: string) {
-  try {
-    if (!MAIL_API || MAIL_API === "none") {
-      console.log("MAIL_API not configured, skipping email send.");
-      return { status: "skipped" };
-    }
+  if (!MAIL_API || MAIL_API === "none") {
+    throw new Error("MAIL_API is not configured");
+  }
 
+  try {
     const response = await fetch(MAIL_API, {
       method: "POST",
       headers: {
@@ -30,13 +29,13 @@ async function sendMail(to: string, subject: string, html: string) {
     if (!response.ok) {
       const errText = await response.text().catch(() => "Unknown Mail API Error");
       console.error("Mail API Error:", errText);
-      return { status: "error", message: errText };
+      throw new Error(`Mail API returned ${response.status}: ${errText}`);
     }
 
-    return await response.json().catch(() => ({ status: "ok" }));
+    return { status: "ok" };
   } catch (err) {
     console.error("Mail Network Error:", err);
-    return { status: "error", error: err };
+    throw err;
   }
 }
 
@@ -163,14 +162,7 @@ function buildOtpEmailHtml(otp: string): string {
 }
 
 export async function sendMOtpail(email: string, otp: string) {
-  try {
-    // Subject includes the OTP so phone notification banners show it
-    // and mobile OS can offer a "Copy Code" / autofill action.
-    const subject = `${otp} is your IDPS login code`;
-    const html = buildOtpEmailHtml(otp);
-
-    await sendMail(email, subject, html);
-  } catch (err) {
-    console.error("Failed to send OTP email safely:", err);
-  }
+  const subject = `${otp} is your IDPS login code`;
+  const html = buildOtpEmailHtml(otp);
+  await sendMail(email, subject, html);
 }

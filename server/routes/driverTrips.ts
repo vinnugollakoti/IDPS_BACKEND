@@ -107,7 +107,7 @@ router.get("/assignment", async (req: AuthRequest, res: Response) => {
       await prisma.busTrip.updateMany({ where: { id: activeTrip.id, status: "ACTIVE" }, data: { status: "EXPIRED", endedAt: new Date() } });
       activeTrip = null;
     }
-    return res.json({ bus: { id: bus.id, driverName: bus.driverName, route: bus.route }, activeTrip });
+    return res.json({ bus: { id: bus.id, busNumber: bus.busNumber, routeName: bus.routeName, driverName: bus.driverName, phone: bus.phone, route: bus.route }, activeTrip });
   } catch (error) { console.error("GET driver assignment", error); return res.status(500).json({ message: "Could not load driver assignment" }); }
 });
 
