@@ -245,6 +245,24 @@ router.get("/get-parents", auth, async(req: AuthRequest, res: Response) => {
     }
 })
 
+router.get("/get-buses", auth, async (req: AuthRequest, res: Response) => {
+    try {
+        if (!isStaffRole(req.user.role)) {
+            return res.status(401).json({ message: "UnAuthorized request" });
+        }
+        const buses = await prisma.bus.findMany({
+            include: {
+                _count: { select: { students: true } }
+            },
+            orderBy: { id: "asc" }
+        });
+        res.json({ message: "Fetched buses successfully", data: buses });
+    } catch (err) {
+        console.log(err);
+        return res.status(400).json({ message: "Error in fetching buses" });
+    }
+});
+
 router.get("/get-marks", auth, async(req: AuthRequest, res: Response) => {
     try {
         if (!isStaffRole(req.user.role) && req.user.role !== "PARENT") {
@@ -505,6 +523,7 @@ router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
         const students = await prisma.student.findMany({
             where,
             include: {
+                bus: true,
                 class: {
                     select: {
                         id: true,

@@ -2,6 +2,7 @@ import express, { Response } from "express";
 import prisma from "../prisma/client";
 import { AuthRequest, auth, isExecutiveRole } from "../middleware/auth";
 import webpush, { PushSubscription } from "web-push";
+import { isBusTripWindowOpen } from "../utils/busTripSchedule";
 
 const router = express.Router();
 router.use(auth);
@@ -183,6 +184,22 @@ router.get("/transport/:studentId", async (req: AuthRequest, res: Response) => {
     if (!bus) return res.json({ studentId, assigned: false, transport: null });
     return res.json({ studentId, assigned: true, transport: { busId: bus.id, busNumber: `Bus ${bus.id}`, routeName: bus.route.join(" · "), route: bus.route, driver: { name: bus.driverName, phone: bus.phone } } });
   } catch (error) { console.error("GET /parent/transport", error); return res.status(500).json({ message: "Could not fetch transport details" }); }
+});
+
+router.get("/transport/:studentId/live", async (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = Number(req.params.studentId); const linked = await getLinkedStudent(req, studentId);
+    if (!linked) return res.status(403).json({ message: "Student is not linked to this parent account" });
+    const busId = linked.student.busId;
+    if (!busId) return res.json({ active: false, reason: "NO_BUS" });
+    let trip = await prisma.busTrip.findFirst({ where: { busId, status: "ACTIVE" }, orderBy: { startedAt: "desc" } });
+    if (!trip) return res.json({ active: false, reason: "NO_ACTIVE_TRIP" });
+    if (Date.now() - trip.lastPingAt.getTime() > 90_000 || !isBusTripWindowOpen(trip.period)) {
+      await prisma.busTrip.updateMany({ where: { id: trip.id, status: "ACTIVE" }, data: { status: "EXPIRED", endedAt: new Date() } });
+      return res.json({ active: false, reason: Date.now() - trip.lastPingAt.getTime() > 90_000 ? "LOCATION_STALE" : "OUTSIDE_WINDOW" });
+    }
+    return res.json({ active: true, tripId: trip.id, period: trip.period, startedAt: trip.startedAt, lastPingAt: trip.lastPingAt, location: { latitude: trip.latitude, longitude: trip.longitude, heading: trip.heading, speed: trip.speed, recordedAt: trip.lastPingAt }, driver: { name: linked.student.bus?.driverName, phone: linked.student.bus?.phone } });
+  } catch (error) { console.error("GET live bus location", error); return res.status(500).json({ message: "Could not fetch live bus location" }); }
 });
 
 router.get("/leave-requests/:studentId", async (req: AuthRequest, res: Response) => {
