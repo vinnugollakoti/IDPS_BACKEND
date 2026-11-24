@@ -1,3 +1,5 @@
+import { storedReportCards } from "../utils/storedReportCards";
+import { reportCardDocument } from "../utils/reportCardDocument";
 import express, { Response } from "express";
 import prisma from "../prisma/client";
 import { AuthRequest, auth, isExecutiveRole } from "../middleware/auth";
@@ -113,6 +115,35 @@ router.get("/homework/:studentId", async (req: AuthRequest, res: Response) => {
     const teacherMap = new Map(teachers.map(item => [item.id, item.name]));
     return res.json({ studentId, homework: homeworks.map(item => ({ id: item.id, subject: item.subject, title: item.description, description: item.description, assignedDate: item.createdAt.toISOString(), dueDate: item.dueDate.toISOString(), due: item.dueDate.toISOString(), postedBy: teacherMap.get(item.teacherId) ?? "Class teacher", attachments: Array.isArray(item.attachments) ? item.attachments : [] })) });
   } catch (error) { console.error("GET /parent/homework", error); return res.status(500).json({ message: "Could not fetch student homework" }); }
+});
+
+router.get("/report-cards/:studentId", async (req: AuthRequest, res: Response) => {
+  try {
+    const studentId = Number(req.params.studentId);
+    if (!Number.isSafeInteger(studentId) || studentId < 1) return res.sendStatus(400);
+    const linked = await getLinkedStudent(req, studentId);
+    if (!linked) return res.sendStatus(403);
+    const exams = await prisma.exam.findMany({
+      where: {classId:linked.student.classId}, orderBy:{id:"asc"},
+      include:{subject:true, marks:{where:{studentId}}}
+    });
+    const groups = new Map<string,typeof exams>();
+    for (const exam of exams) {
+      const group = groups.get(exam.name) ?? [];
+      group.push(exam);
+      groups.set(exam.name,group);
+    }
+    const stored = await storedReportCards(studentId, [...groups.values()].filter(g=>g.every(e=>e.isReleased)).map(g=>g[0].id));
+    const cards = [];
+    for (const [name,group] of groups) {
+      const published = group.filter(e=>e.isReleased);
+      // Supplementary fields belong to the entire exam. Publish them only when all subjects are released.
+      const fields = published.length === group.length ? stored.find(c=>c.examId===group[0].id)?.fields : null;
+      if (!fields && !published.some(e=>e.marks.length)) continue;
+      cards.push({name, date:group[0].examDate, html:reportCardDocument(linked.student,name,group[0].examDate,published,fields)});
+    }
+    res.set("Cache-Control","private, no-store").json({cards:cards.sort((a,b)=>b.date.getTime()-a.date.getTime())});
+  } catch { res.status(500).json({message:"Could not load report cards"}); }
 });
 
 router.get("/academics/:studentId", async (req: AuthRequest, res: Response) => {
@@ -248,8 +279,9 @@ router.patch("/leave-requests/:id/status", async (req: AuthRequest, res: Respons
     if (!request) return res.status(404).json({ message: "Leave request not found" });
     const allowed = req.user.role === "TEACHER" && request.assignedTeacher.userId === userIdOf(req) || isExecutiveRole(req.user.role);
     if (!allowed) return res.status(403).json({ message: "Only the assigned class teacher or school leadership can respond" });
-    const updated = await prisma.leaveRequest.update({ where: { id }, data: { status, teacherResponse: typeof req.body?.response === "string" ? req.body.response.trim().slice(0, 1000) || null : null } });
-    return res.json({ message: "Leave request updated", data: updated });
+    const updated = await prisma.leaveRequest.updateMany({ where: { id, status: "PENDING" }, data: { status, teacherResponse: typeof req.body?.response === "string" ? req.body.response.trim().slice(0, 1000) || null : null } });
+    if (!updated.count) return res.status(409).json({message:"This leave request has already been decided"});
+    return res.json({ message: "Leave request updated", data: await prisma.leaveRequest.findUnique({where:{id}}) });
   } catch (error) { console.error("PATCH leave request", error); return res.status(500).json({ message: "Could not update leave request" }); }
 });
 

@@ -8,6 +8,8 @@ const router = express.Router();
 const resolveUserId = (user: any) => Number(user?.userId ?? user?.id) || null;
 const canManage = (role: string) => isExecutiveRole(role) || role === "TEACHER";
 const teacherForUser = async (userId: number | null) => userId ? prisma.teacher.findUnique({ where: { userId }, select: { id: true } }) : null;
+const classScope = (user: any) => user.role === "TEACHER"
+  ? { OR: [{teacher:{userId: Number(user.userId ?? user.id)}},{teachers:{some:{teacher:{userId:Number(user.userId ?? user.id)}}}}] } : {};
 const serialize = (item: any) => {
   const isArchived = item.dueDate
     ? new Date(new Date(item.dueDate).setHours(23, 59, 59, 999)).getTime() < Date.now()
@@ -24,13 +26,14 @@ router.use(auth);
 router.get("/classes", async (req: AuthRequest, res: Response) => {
   try {
     if (!canManage(req.user.role)) return res.status(403).json({ message: "You are not allowed to view homework classes" });
-    const classes = await prisma.class.findMany({ orderBy: [{ name: "asc" }, { section: "asc" }], select: { id: true, name: true, section: true, _count: { select: { students: true } } } });
+    const classes = await prisma.class.findMany({ where: classScope(req.user), orderBy: [{ name: "asc" }, { section: "asc" }], select: { id: true, name: true, section: true, _count: { select: { students: true } } } });
     return res.json({ message: "Homework classes fetched successfully", data: classes });
   } catch (err: any) { return res.status(500).json({ message: err?.message || "Unable to fetch homework classes" }); }
 });
 
 router.get("/", async (req: AuthRequest, res: Response) => {
   try {
+    if (!canManage(req.user.role)) return res.status(403).json({message:"Staff access required"});
     const classId = req.query.classId ? Number(req.query.classId) : undefined;
     const userId = resolveUserId(req.user);
 
@@ -89,7 +92,10 @@ router.post("/", async (req: AuthRequest, res: Response) => {
     const { classId, subject, description, dueDate, attachments = [] } = req.body ?? {};
     if (!Number(classId) || !subject?.trim() || !description?.trim() || !dueDate || Number.isNaN(Date.parse(dueDate))) return res.status(400).json({ message: "Class, subject, instructions, and a valid due date are required" });
     const userId = resolveUserId(req.user); const teacher = req.user.role === "TEACHER" ? await teacherForUser(userId) : null;
-    const teacherId = teacher?.id || Number(req.body.teacherId) || 1;
+    const assigned = await prisma.class.findFirst({where:{id:Number(classId),...classScope(req.user)},select:{teacherId:true,teachers:{select:{teacherId:true},orderBy:{teacherId:"asc"},take:1}}});
+    if (!assigned) return res.status(403).json({message:"Class unavailable"});
+    const teacherId = teacher?.id ?? assigned.teacherId ?? assigned.teachers[0]?.teacherId;
+    if (!teacherId) return res.status(409).json({message:"Assign a teacher to this class before creating homework"});
     const uploaded = [];
     for (const [index, file] of (Array.isArray(attachments) ? attachments : []).entries()) uploaded.push(await uploadHomeworkFile({ imageBase64: file.base64, imageMimeType: file.mimeType, path: `homework/${teacherId}_${Date.now()}_${index}` }));
     const result = await prisma.homework.create({ data: { classId: Number(classId), teacherId, subject: subject.trim(), description: description.trim(), dueDate: new Date(dueDate), attachments: uploaded } });
@@ -104,6 +110,7 @@ router.put("/:id", async (req: AuthRequest, res: Response) => {
     const id = Number(req.params.id); const existing = await prisma.homework.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ message: "Homework not found" });
     const teacher = req.user.role === "TEACHER" ? await teacherForUser(resolveUserId(req.user)) : null;
+    if (req.user.role === "TEACHER" && !teacher) return res.status(403).json({message:"Teacher profile required"});
     if (teacher && existing.teacherId !== teacher.id) {
       const isAssigned = await prisma.class.findFirst({
         where: {
@@ -119,6 +126,7 @@ router.put("/:id", async (req: AuthRequest, res: Response) => {
       }
     }
     const { classId, subject, description, dueDate } = req.body ?? {};
+    if (classId && !await prisma.class.findFirst({where:{id:Number(classId),...classScope(req.user)},select:{id:true}})) return res.status(403).json({message:"Class unavailable"});
     const result = await prisma.homework.update({ where: { id }, data: { ...(classId ? { classId: Number(classId) } : {}), ...(subject?.trim() ? { subject: subject.trim() } : {}), ...(description?.trim() ? { description: description.trim() } : {}), ...(dueDate && !Number.isNaN(Date.parse(dueDate)) ? { dueDate: new Date(dueDate) } : {}) } });
     return res.json({ message: "Homework updated successfully", data: serialize(result) });
   } catch (err: any) { console.error("PUT /homework/:id error:", err); return res.status(500).json({ message: err?.message || "Unable to update homework" }); }
@@ -130,6 +138,7 @@ router.delete("/:id", async (req: AuthRequest, res: Response) => {
     const id = Number(req.params.id); const existing = await prisma.homework.findUnique({ where: { id } });
     if (!existing) return res.status(404).json({ message: "Homework not found" });
     const teacher = req.user.role === "TEACHER" ? await teacherForUser(resolveUserId(req.user)) : null;
+    if (req.user.role === "TEACHER" && !teacher) return res.status(403).json({message:"Teacher profile required"});
     if (teacher && existing.teacherId !== teacher.id) {
       const isAssigned = await prisma.class.findFirst({
         where: {

@@ -7,6 +7,7 @@ import {sendMOtpail} from "../mailer/mail"
 import { generateToken } from "../middleware/jwt";
 import { authRateLimit } from "../middleware/authRateLimit";
 const router = express.Router();
+const parentReviewEmail = "play-parent@review.invalid";
 const parentOtpHash = (email: string, otp: string) => createHash("sha256").update(`${process.env.JWT_SECRET}:${email}:${otp}`).digest("hex");
 
 const verifyReviewerPassword = (password: string, stored: string) => {
@@ -87,6 +88,9 @@ router.post("/login", authRateLimit({ action: "otp-request", windowMs: 15 * 60 *
 router.post("/parent/email-otp/request", authRateLimit({ action: "parent-email-otp-request", windowMs: 15 * 60 * 1000, max: 5 }), async (req: Request, res: Response) => {
     const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "Enter a valid email address" });
+    if (email === parentReviewEmail) {
+        return res.json({ message: "If a parent account matches that email, a sign-in code has been sent." });
+    }
     try {
         const user = await prisma.user.findFirst({ where: { email, role: "PARENT", parent: { isNot: null } }, select: { id: true, email: true } });
         if (user) {
@@ -110,6 +114,20 @@ router.post("/parent/email-otp/verify", authRateLimit({ action: "parent-email-ot
         return res.status(400).json({ message: "Enter the email address and six-digit code" });
     }
     try {
+        if (email === parentReviewEmail) {
+            const hash = process.env.PARENT_PLAY_REVIEW_CODE_HASH || "";
+            if (!/^[a-f0-9]{32}:[a-f0-9]{128}$/.test(hash) || !verifyReviewerPassword(otp, hash)) {
+                return res.status(400).json({ message: "The sign-in code is invalid or expired" });
+            }
+            const reviewer = await prisma.user.findFirst({
+                where: { email, role: "PARENT", parent: { is: { students: {
+                    some: {}, every: { student: { studentCode: { in: ["PLAY-REVIEW-A", "PLAY-REVIEW-B"] }, busId: null, class: { name: "Play Review", section: "Sample" } } }
+                } } } },
+                select: { id: true, name: true, email: true, role: true },
+            });
+            if (!reviewer) return res.status(503).json({ message: "Review account setup is incomplete" });
+            return res.json({ token: generateToken(reviewer.id, "PARENT"), user: reviewer });
+        }
         const user = await prisma.user.findFirst({
             where: { email, role: "PARENT", parent: { isNot: null } },
             select: { id: true, name: true, email: true, role: true, otp: true, otpExpiry: true },

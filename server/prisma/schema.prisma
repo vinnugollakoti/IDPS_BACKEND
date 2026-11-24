@@ -44,6 +44,7 @@ model ParentStudent {
 }
 
 model Student {
+  reportCards ReportCard[]
   id             Int             @id @default(autoincrement())
   photo          String?
   admissionno    String          @default("TEMP")
@@ -409,6 +410,7 @@ model ClassSubject {
 }
 
 model Exam {
+  reportCards ReportCard[]
   id         Int      @id @default(autoincrement())
   name       String
   totalMarks Float
@@ -745,4 +747,27 @@ model AuditLog {
   @@index([tag])
   @@index([action])
   @@index([createdAt])
+}
+
+model ReportCard {
+  examId Int
+  studentId Int
+  fields Json
+  revision Int @default(1)
+  exam Exam @relation(fields: [examId], references: [id], onDelete: Cascade)
+  student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  @@id([examId, studentId])
+}
+
+model BillDeskWebhookEvent {
+  eventKey      String   @id
+  merchantId    String
+  orderId       String
+  transactionId String
+  authStatus    String
+  amount        Decimal  @db.Decimal(18, 2)
+  currency      String
+  receivedAt    DateTime @default(now())
+
+  @@index([merchantId, orderId])
 }
