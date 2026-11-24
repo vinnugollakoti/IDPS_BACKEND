@@ -1,0 +1,10 @@
+.git
+.env*
+*.pem
+*.key
+node_modules
+generated
+dist
+*.dump
+*.age
+*.sqlite*

@@ -2051,7 +2051,7 @@ unique(teacherId, attendanceDate)
 
 ### BillDesk fee payment notifications
 
-For BillDesk UAT onboarding, provide `https://idps-backend.onrender.com/payments/billdesk/webhook` as the webhook URL. If BillDesk's "Transaction URL" field means the merchant return URL (`ru` in the Create Order request), provide `https://idps-backend.onrender.com/payments/billdesk/return`. The return route accepts GET and POST and shows a pending-verification page. It does not settle a payment or display an unverified success message. Confirm the meaning of "Transaction URL" with the BillDesk integration contact before submitting it, since their form does not define that field. Both routes require deployment before they are live.
+BillDesk confirmed the Transaction URL is the merchant page where the customer initiates payment. Use the deployed parent PWA origin plus `/payments/start`, which opens School fees after parent sign-in. The parent chooses a fee and reviews the amount there. Provide `https://idps-backend.onrender.com/payments/billdesk/webhook` for server notifications. The separate `/payments/billdesk/return` route is the browser destination after checkout (Create Order parameter `ru`).
 
 The webhook responds with HTTP 503 until BillDesk issues the merchant credentials and they are configured on the server. This is expected during onboarding. A valid BillDesk delivery must be tested in UAT after configuration. A plain curl request with `invalid` as its body cannot produce HTTP 200.
 
