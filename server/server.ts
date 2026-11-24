@@ -1,3 +1,4 @@
+import backups from "./routes/backups";
 import billdeskWebhook from "./routes/billdesk";
 import billdeskReturn from "./routes/billdeskReturn";
 import reportCards from "./routes/reportCards";
@@ -219,6 +220,7 @@ app.get("/health/database", async (_req: Request, res: Response) => {
     });
 });
 
+app.use("/admin/backups", backups);
 app.use("/", UserRouter);
 app.use("/attendance", StudentAttendanceRouter);
 app.use("/complaints", ComplaintsRouter);
