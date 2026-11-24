@@ -1,3 +1,5 @@
+import billdeskWebhook from "./routes/billdesk";
+import reportCards from "./routes/reportCards";
 import express, { Request, Response } from "express";
 import cors from "cors";
 import helmet from "helmet";
@@ -33,6 +35,7 @@ app.use((_req, res, next) => {
     next();
 });
 app.use(cors());
+app.use("/payments/billdesk/webhook", billdeskWebhook);
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ limit: "5mb", extended: true }));
 
@@ -218,6 +221,7 @@ app.use("/", UserRouter);
 app.use("/attendance", StudentAttendanceRouter);
 app.use("/complaints", ComplaintsRouter);
 app.use("/auth", AuthRouter);
+app.use("/report-cards", reportCards);
 app.use("/class", ClassRouter);
 app.use("/student", StudentRouter);
 app.use("/teacher", TeacherRouter);

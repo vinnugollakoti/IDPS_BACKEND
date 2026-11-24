@@ -4,12 +4,11 @@ import { AuthRequest, auth, isStaffRole } from "../middleware/auth";
 
 const router = express.Router();
 const dayStart = (value?: string) => {
-  const date = value ? new Date(value) : new Date();
-  // Use local midnight date string (YYYY-MM-DD) normalized to UTC midnight for consistent daily sessions
-  const year = date.getFullYear();
-  const month = date.getMonth();
-  const day = date.getDate();
-  return new Date(Date.UTC(year, month, day, 0, 0, 0, 0));
+  if (value && /^\d{4}-\d{2}-\d{2}$/.test(value)) return new Date(value + "T00:00:00Z");
+  const instant = value ? new Date(value) : new Date();
+  if (!Number.isFinite(instant.getTime())) return new Date(NaN);
+  const schoolDay = new Intl.DateTimeFormat("en-CA", {timeZone:"Asia/Kolkata",year:"numeric",month:"2-digit",day:"2-digit"}).format(instant);
+  return new Date(schoolDay + "T00:00:00Z");
 };
 const userId = (user: any) => Number(user?.userId ?? user?.id);
 const assignedTeacherClassIds = async (req: AuthRequest) => {
@@ -58,6 +57,7 @@ router.post("/batch-sync", auth, async (req: AuthRequest, res: Response) => {
       // Use student's assigned classId if item classId doesn't match or is missing
       const classId = student.classId;
       const date = dayStart(item?.scannedAt);
+      if (!Number.isFinite(date.getTime())) return res.status(400).json({message:"Invalid scan date"});
       const key = `${classId}:${date.toISOString()}`;
       const group = grouped.get(key) || [];
       if (!group.some((entry) => entry.studentId === student.id)) group.push({ classId, date, studentId: student.id, code });

@@ -11,6 +11,16 @@ const resolveAuthUserId = (user: any) => {
 };
 
 
+async function canManageClass(user: any, classId: number) {
+    if (!Number.isSafeInteger(classId) || classId < 1) return false;
+    if (isExecutiveRole(user.role) || user.role === "RECEPTIONIST") return true;
+    const userId = resolveAuthUserId(user);
+    if (user.role !== "TEACHER" || !userId) return false;
+    return Boolean(await prisma.class.findFirst({where:{id:classId, OR:[
+        {teacher:{userId}}, {teachers:{some:{teacher:{userId}}}}
+    ]}, select:{id:true}}));
+}
+
 router.post("/create-class", auth, async(req: AuthRequest, res: Response) => {
     try {
         if (!isExecutiveRole(req.user.role)) {
@@ -149,6 +159,7 @@ router.post("/create-exam", auth, async(req: AuthRequest, res: Response) => {
             return res.status(400).json({message : "Missing required fields: exam title and classId are required"});
         }
 
+        if (!(await canManageClass(req.user, Number(classId)))) return res.status(403).json({message:"Class is not assigned to you"});
         // Case 1: Standard single subject exam or multiple subjects array
         const subjectsToCreate: Array<{ name: string; maxMarks: number }> = [];
 
@@ -251,34 +262,10 @@ router.post("/release-exam", auth, async(req: AuthRequest, res: Response) => {
             return res.status(400).json({ message: "Missing required fields: examId or examName and classId" });
         }
 
-        const authUserId = resolveAuthUserId(req.user);
-
-        // Verification: If teacher, verify they are assigned as class teacher or teacher for this class
-        if (req.user.role === "TEACHER") {
-            const teacher = await prisma.teacher.findUnique({
-                where: { userId: authUserId ?? -1 },
-                select: { id: true }
-            });
-            if (!teacher) {
-                return res.status(403).json({ message: "Teacher account not found" });
-            }
-
-            const targetClassId = Number(classId);
-            if (targetClassId) {
-                const cls = await prisma.class.findFirst({
-                    where: {
-                        id: targetClassId,
-                        OR: [
-                            { teacherId: teacher.id },
-                            { teachers: { some: { teacherId: teacher.id } } }
-                        ]
-                    }
-                });
-                if (!cls) {
-                    return res.status(403).json({ message: "You can only release marks for your assigned class" });
-                }
-            }
-        }
+        const releaseClass = examId
+            ? (await prisma.exam.findUnique({where:{id:Number(examId)},select:{classId:true}}))?.classId
+            : Number(classId);
+        if (!releaseClass || !(await canManageClass(req.user, releaseClass))) return res.status(403).json({message:"Class unavailable"});
 
         // Perform release update
         let updatedCount = 0;
@@ -347,6 +334,8 @@ router.post("/create-marks", auth, async(req: AuthRequest, res: Response) => {
             return res.status(404).json({message: "Exam not found"});
         }
 
+        if (!(await canManageClass(req.user, exam.classId))) return res.status(403).json({message:"Class is not assigned to you"});
+        if (!await prisma.student.findFirst({where:{id:Number(studentId),classId:exam.classId},select:{id:true}})) return res.status(400).json({message:"Student is not enrolled in the exam class"});
         if (markNum > exam.totalMarks) {
             return res.status(400).json({message: `Marks obtained (${markNum}) cannot exceed maximum marks (${exam.totalMarks})`});
         }
@@ -476,19 +465,21 @@ router.put("/update-marks/:id", auth, async (req: AuthRequest, res: Response) =>
     const marksId = Number(req.params.id);
 
     const existing = await prisma.mark.findUnique({
-      where: { id: marksId }
+      where: { id: marksId }, include:{exam:true,student:{select:{classId:true}}}
     });
 
     if (!existing) {
       return res.status(404).json({ message: "Marks record not found" });
     }
 
+    if (!(await canManageClass(req.user,existing.exam.classId))) return res.status(403).json({message:"Class is not assigned to you"});
+    if ((examId !== undefined && Number(examId) !== existing.examId) || (studentId !== undefined && Number(studentId) !== existing.studentId) || existing.student.classId !== existing.exam.classId ||
+        typeof marks !== "number" || !Number.isFinite(marks) || marks < 0 || marks > existing.exam.totalMarks)
+      return res.status(400).json({message:"Invalid mark or exam assignment"});
     const updatedMarks = await prisma.mark.update({
       where: { id: marksId },
       data: {
-        examId,
-        marks,
-        studentId
+        marks
       },
       include: {
         student: true,
@@ -496,6 +487,7 @@ router.put("/update-marks/:id", auth, async (req: AuthRequest, res: Response) =>
       }
     });
 
+    void serverCache.clear();
     res.json({message: "Successfully updated marks", data: updatedMarks});
   } catch (err) {
     console.log(err);
@@ -707,6 +699,7 @@ router.put("/update-exam/:id", auth, async (req: AuthRequest, res: Response) => 
             return res.status(400).json({message: "Exam not found"});
         }
 
+        if (!(await canManageClass(req.user,existing.classId)) || (classId && !(await canManageClass(req.user,Number(classId))))) return res.status(403).json({message:"Class unavailable"});
         const updatedExam = await prisma.exam.update({
             where: {id: examId},
             data : {

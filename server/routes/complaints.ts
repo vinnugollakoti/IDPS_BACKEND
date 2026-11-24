@@ -7,11 +7,17 @@ const router = express.Router();
 const idOf = (user: any) => Number(user?.userId ?? user?.id);
 const staff = (role: string) => ["TEACHER", "RECEPTIONIST", "PRINCIPAL", "DIRECTOR", "CHAIRMAN"].includes(role);
 
+function recipientScope(user: any) {
+  if (user.role === "TEACHER") return { recipientType: "CLASS_TEACHER" as const, assignedTeacher: { userId: idOf(user) } };
+  if (["PRINCIPAL","CHAIRMAN","DIRECTOR"].includes(user.role)) return {};
+  return { OR: [] };
+}
+
 router.get("/", auth, async (req: AuthRequest, res: Response) => {
   try {
     if (!staff(req.user.role) && req.user.role !== "PARENT") return res.status(403).json({ message: "You are not allowed to view complaints" });
     const where: any = staff(req.user.role)
-      ? { ...(req.query.status ? { status: String(req.query.status) as any } : {}) }
+      ? { ...recipientScope(req.user), ...(req.query.status ? { status: String(req.query.status) as any } : {}) }
       : { submittedById: idOf(req.user), ...(req.query.studentId ? { studentId: Number(req.query.studentId) } : {}) };
     const complaints = await prisma.complaint.findMany({ where, include: { student: { select: { id: true, name: true, class: { select: { name: true, section: true } } } }, assignedTeacher: { select: { name: true } } }, orderBy: { createdAt: "desc" }, take: 200 });
     res.json({ message: "Complaints fetched", data: complaints });
@@ -62,9 +68,9 @@ router.patch("/:id/status", auth, async (req: AuthRequest, res: Response) => {
     if (!isStaffRole(req.user.role)) return res.status(403).json({ message: "Only staff can update complaints" });
     const status = ["OPEN", "IN_REVIEW", "RESOLVED", "CLOSED"].includes(req.body?.status) ? req.body.status : null;
     if (!status) return res.status(400).json({ message: "Invalid complaint status" });
-    const complaint = await prisma.complaint.update({ where: { id: Number(req.params.id) }, data: { status, response: typeof req.body?.response === "string" ? req.body.response.trim() || null : undefined } });
+    const complaint = await prisma.complaint.update({ where: { id: Number(req.params.id), ...recipientScope(req.user) }, data: { status, response: typeof req.body?.response === "string" ? req.body.response.trim() || null : undefined } });
     res.json({ message: "Complaint updated", data: complaint });
-  } catch (error: any) { res.status(500).json({ message: "Failed to update complaint", error: error?.message }); }
+  } catch (error: any) { res.status(error?.code === "P2025" ? 404 : 500).json({ message: "Could not update complaint" }); }
 });
 
 export default router;

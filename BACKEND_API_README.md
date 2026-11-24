@@ -2048,3 +2048,12 @@ unique(teacherId, attendanceDate)
 | GET | `/get/get-marks` | Yes | `PRINCIPAL`, `RECEPTIONIST`, `TEACHER`, `PARENT` |
 | GET | `/get/get-subjects` | Yes | `PRINCIPAL`, `RECEPTIONIST`, `TEACHER`, `PARENT` |
 | GET | `/get/get-fees` | Yes | `PRINCIPAL`, `RECEPTIONIST`, `TEACHER`, `PARENT` |
+
+### BillDesk fee payment notifications
+
+Merchant onboarding S2S URL: `https://idps-backend.onrender.com/payments/billdesk/webhook` (HTTPS POST).
+The implemented profile accepts raw compact JOSE with Content-Type `application/jose`: outer HS256 signature, inner direct A256GCM encryption, protected clientid and kid on both envelopes. Confirm this exact webhook wire format and key identifiers with BillDesk in UAT before enabling traffic. A browser return URL is configured separately.
+
+Deploy the webhook inbox migration and updated server. Set the six BILLDESK variables listed in server/.env.example through the host secret manager. Supply the provider-issued raw symmetric key strings. Use separate deployments, databases and credentials for UAT and production.
+
+For INR transaction events the server commits a minimal event record before replying HTTP 200. Repeated notifications are idempotent. Monitor non-200 responses, inbox backlog and unexpected transaction statuses. No fee settlement worker or checkout flow is enabled in this phase. Before taking real payments, match each transaction to a server-created fee order, verify its merchant, currency and exact amount, reconcile uncertain states with BillDesk, and atomically post a single payment and receipt.
