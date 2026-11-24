@@ -1,4 +1,5 @@
 import billdeskWebhook from "./routes/billdesk";
+import billdeskReturn from "./routes/billdeskReturn";
 import reportCards from "./routes/reportCards";
 import express, { Request, Response } from "express";
 import cors from "cors";
@@ -36,6 +37,7 @@ app.use((_req, res, next) => {
 });
 app.use(cors());
 app.use("/payments/billdesk/webhook", billdeskWebhook);
+app.use("/payments/billdesk/return", billdeskReturn);
 app.use(express.json({ limit: "5mb" }));
 app.use(express.urlencoded({ limit: "5mb", extended: true }));
 
