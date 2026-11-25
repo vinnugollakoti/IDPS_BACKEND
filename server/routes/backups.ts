@@ -48,7 +48,16 @@ router.post("/file",async(req:Request,res:Response)=>{
   });
 });
 router.use(auth,async(req:AuthRequest,res,next)=>{
-  if(!isExecutiveRole(req.user.role) || !await permitted(Number(req.user.userId)))return res.sendStatus(403);
+  if (!isExecutiveRole(req.user.role)) {
+    return res.status(403).json({ message: "An executive account with backup access is required." });
+  }
+  const id = Number(req.user.userId);
+  if (!process.env.BACKUP_ADMIN_IDS?.split(",").some(value => value.trim())) {
+    return res.status(503).json({ code: "BACKUP_ACCESS_UNCONFIGURED", message: `Backup access has not been configured on the primary server. Ask the server administrator to configure BACKUP_ADMIN_IDS. Your user ID is ${id}.` });
+  }
+  if (!await permitted(id)) {
+    return res.status(403).json({ message: `Your account does not have backup access. Ask the server administrator to check your executive role and BACKUP_ADMIN_IDS for user ID ${id}.` });
+  }
   next();
 });
 router.get("/",(_req,res)=>{
