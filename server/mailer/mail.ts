@@ -11,13 +11,17 @@ async function sendMail(to: string, subject: string, html: string) {
   const MAIL_API = process.env.MAIL_API?.trim();
   const MAIL_ID = process.env.MAIL_ID?.trim();
   const { MAIL_PASSWORD } = process.env;
-  if (!MAIL_API || !URL.canParse(MAIL_API) || !/^https?:\/\//i.test(MAIL_API) || !MAIL_ID || !MAIL_PASSWORD) {
+  const relay = MAIL_API && URL.canParse(MAIL_API) ? new URL(MAIL_API) : undefined;
+  const localTestRelay = relay?.protocol === "http:" && process.env.NODE_ENV !== "production"
+    && ["localhost", "127.0.0.1", "[::1]"].includes(relay.hostname);
+  if (!relay || (relay.protocol !== "https:" && !localTestRelay) || !MAIL_ID || !MAIL_PASSWORD) {
     throw new MailDeliveryError("mail_configuration");
   }
 
   let response: Response;
   try {
-    response = await fetch(MAIL_API, {
+    response = await fetch(relay.href, {
+      redirect: "manual",
       method: "POST",
       signal: AbortSignal.timeout(35_000),
       headers: { "Content-Type": "application/json" },
