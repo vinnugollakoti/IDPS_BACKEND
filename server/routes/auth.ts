@@ -7,6 +7,7 @@ import { MailDeliveryError, sendMOtpail } from "../mailer/mail";
 import { generateToken } from "../middleware/jwt";
 import { authRateLimit } from "../middleware/authRateLimit";
 const router = express.Router();
+const limitOtpRequests = authRateLimit({ action: "otp-request", windowMs: 15 * 60_000, max: 3 });
 const parentReviewEmail = "play-parent@review.invalid";
 const otpDigest = (scope: "parent" | "general", email: string, otp: string) =>
     createHmac("sha256", process.env.JWT_SECRET!).update(JSON.stringify([scope, email, otp])).digest("hex");
@@ -21,6 +22,11 @@ async function emailOtp(user: { id: number; email: string }, scope: "parent" | "
     try {
         await sendMOtpail(user.email, code);
     } catch (error) {
+        if (error instanceof MailDeliveryError) {
+            console.error("OTP relay failure", { scope, reason: error.reason, upstreamStatus: error.upstreamStatus, relayRequestId: error.relayRequestId });
+            // The relay may already have delivered the message when its acknowledgement times out.
+            if (error.reason === "mail_timeout" || error.upstreamStatus === 504) return "unconfirmed";
+        }
         await prisma.user.updateMany({
             where: { id: user.id, otp: digest },
             data: { otp: null, otpExpiry: null },
@@ -71,7 +77,7 @@ router.post("/play-review-login", authRateLimit({ action: "review-login", window
     }
 });
 
-router.post("/login", authRateLimit({ action: "otp-request", windowMs: 15 * 60 * 1000, max: 5 }), async( req: Request, res: Response) => {
+router.post("/login", limitOtpRequests, async( req: Request, res: Response) => {
     try {
 
         const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
@@ -91,11 +97,12 @@ router.post("/login", authRateLimit({ action: "otp-request", windowMs: 15 * 60 *
             });
         }
 
-        await emailOtp(user, "general");
+        if (await emailOtp(user, "general") === "unconfirmed") {
+            return res.status(202).json({ message: "Delivery is taking longer than usual. Check your email for the sign-in code. It is valid for five minutes from the request." });
+        }
         res.json({ message: "OTP Sent, valid for 5 minutes" });
     } catch (err) {
         if (err instanceof MailDeliveryError) {
-            console.error("Staff login email failed", { reason: err.reason, upstreamStatus: err.upstreamStatus });
             return res.status(503).json({ code: "OTP_DELIVERY_UNAVAILABLE", message: "We could not send your sign-in email. Please try again later." });
         }
         const prismaCode = err instanceof Error && "code" in err ? err.code : undefined;
@@ -104,7 +111,7 @@ router.post("/login", authRateLimit({ action: "otp-request", windowMs: 15 * 60 *
     }
 })
 
-router.post("/parent/email-otp/request", authRateLimit({ action: "parent-email-otp-request", windowMs: 15 * 60 * 1000, max: 5 }), async (req: Request, res: Response) => {
+router.post("/parent/email-otp/request", limitOtpRequests, async (req: Request, res: Response) => {
     const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
     if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(email)) return res.status(400).json({ message: "Enter a valid email address" });
     if (email === parentReviewEmail) {
