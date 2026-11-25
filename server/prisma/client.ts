@@ -24,6 +24,6 @@ pool.on("error", (err) => {
 });
 
 const adapter = new PrismaPg(pool);
-const prisma = new PrismaClient({ adapter, omit: { user: { otp: true, otpExpiry: true } } });
+const prisma = new PrismaClient({ adapter, omit: { user: { otp: true, otpExpiry: true, phone: true } } });
 
 export default prisma;

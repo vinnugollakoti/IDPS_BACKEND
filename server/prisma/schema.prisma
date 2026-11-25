@@ -195,6 +195,7 @@ model User {
   role      Role
   gender    Gender
   photoUrl  String?
+  phone     String?
   otp       String?
   otpExpiry DateTime?
 

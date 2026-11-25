@@ -343,6 +343,7 @@ router.get("/me", auth, async (req: AuthRequest, res: Response) => {
 
    const user = await prisma.user.findUnique({
       where: { id: authUserId },
+      omit: { phone: false },
       include: {
         parent: true,
         teacher: true,
@@ -356,7 +357,7 @@ router.get("/me", auth, async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ message: "User not found" });
    }
 
-   const phone = user.teacher?.phone || user.parent?.phone1 || undefined;
+   const phone = user.teacher?.phone || user.parent?.phone1 || user.phone || undefined;
    const allowedModules = user.userPermissions.length
       ? user.userPermissions.filter((item) => item.isAllowed).map((item) => item.module)
       : undefined;
@@ -370,40 +371,35 @@ router.put("/me", auth, async (req: AuthRequest, res: Response) => {
     if (!userId) return res.status(401).json({ message: "Invalid token payload" });
     const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
     const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
-    const phone = typeof req.body?.phone === "string" ? req.body.phone.trim() : "";
+    const phone = req.body?.phone === undefined ? undefined : typeof req.body.phone === "string" ? req.body.phone.trim() : null;
     if (!name || !email) return res.status(400).json({ message: "Name and email are required" });
-    
-    const existing = await prisma.user.findFirst({ where: { email, NOT: { id: userId } } });
-    if (existing) return res.status(409).json({ message: "Another account already uses this email" });
-
-    const user = await prisma.user.update({ 
-      where: { id: userId }, 
-      data: { name, email }, 
-      include: { teacher: true, parent: true } 
+    if (phone === null || (phone && (!/^\+?[0-9 ()-]+$/.test(phone) || !/^\d{7,15}$/.test(phone.replace(/\D/g, ""))))) {
+      return res.status(400).json({ message: "Enter a valid phone number, including the country code if needed." });
+    }
+    const current = await prisma.user.findUnique({
+      where: { id: userId }, select: { teacher: { select: { id: true } }, parent: { select: { id: true } } },
     });
-
-    if (user.teacher) {
-      await prisma.teacher.update({ 
-        where: { id: user.teacher.id }, 
-        data: { name, ...(phone ? { phone } : {}) } 
-      });
+    if (!current) return res.status(404).json({ message: "User not found" });
+    if (phone === "" && (current.teacher || current.parent)) {
+      return res.status(400).json({ message: "A contact phone number is required for this profile." });
     }
-
-    if (user.parent) {
-      await prisma.parent.update({ 
-        where: { id: user.parent.id }, 
-        data: { name, ...(phone ? { phone1: phone } : {}) } 
-      });
-    }
-
+    const user = await prisma.user.update({
+      where: { id: userId },
+      data: {
+        name, email,
+        ...(!current.teacher && !current.parent && phone !== undefined ? { phone: phone || null } : {}),
+        ...(current.teacher ? { teacher: { update: { name, phone } } } : {}),
+        ...(current.parent ? { parent: { update: { name, phone1: phone } } } : {}),
+      },
+      omit: { phone: false },
+      include: { teacher: true, parent: true },
+    });
     serverCache.clear();
-
-    const safeUser = { ...user, phone: phone || user.teacher?.phone || user.parent?.phone1 || undefined };
-    delete (safeUser as any).otp;
-    delete (safeUser as any).otpExpiry;
+    const safeUser = { ...user, phone: user.teacher?.phone ?? user.parent?.phone1 ?? user.phone };
     res.json({ message: "Profile updated successfully", data: safeUser, user: safeUser });
   } catch (err: any) {
-    res.status(500).json({ message: "Failed to update profile", error: err?.message });
+    if (err?.code === "P2002") return res.status(409).json({ message: "Another account already uses this email" });
+    res.status(500).json({ message: "Failed to update profile" });
   }
 });
 
