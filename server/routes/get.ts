@@ -2,6 +2,7 @@ import express, {Request, Response} from "express";
 import prisma from "../prisma/client";
 import { AuthRequest, auth, isExecutiveRole, isStaffRole } from "../middleware/auth";
 import { serverCache } from "../utils/cache";
+import { listPage, pageQuery, pageFilter, listRows } from "../utils/listPage";
 const router = express.Router();
 
 const resolveAuthUserId = (user: any) => {
@@ -10,10 +11,10 @@ const resolveAuthUserId = (user: any) => {
 };
 
 
-router.get("/get-exams", auth, async(req: AuthRequest, res: Response) => {
+router.get("/get-exams", auth, listPage("name", ["name", "examDate"]), async(req: AuthRequest, res: Response) => {
     try {
         if (!isStaffRole(req.user.role) && req.user.role !== "PARENT") {
-            return res.status(401).json({message : "UnAuthorized request"});
+            return res.status(403).json({message : "UnAuthorized request"});
         }
 
         const authUserId = resolveAuthUserId(req.user);
@@ -25,7 +26,7 @@ router.get("/get-exams", auth, async(req: AuthRequest, res: Response) => {
                 where: { userId: authUserId ?? -1 },
                 select: { id: true }
             });
-            if (!teacher) return res.json({message: "Fetched Exams", data: []});
+            if (!teacher) return res.json({message: "Fetched Exams", ...listRows([], res.locals.page)});
             const teacherClasses = await prisma.class.findMany({
                 where: {
                     OR: [
@@ -37,19 +38,19 @@ router.get("/get-exams", auth, async(req: AuthRequest, res: Response) => {
             });
             classIds = teacherClasses.map((c) => c.id);
         } else if (req.user.role === "PARENT") {
-            if (!authUserId) return res.json({message: "Fetched Exams", data: []});
+            if (!authUserId) return res.json({message: "Fetched Exams", ...listRows([], res.locals.page)});
             const parent = await prisma.parent.findFirst({
                 where: { userId: authUserId },
                 select: { id: true }
             });
-            if (!parent) return res.json({message: "Fetched Exams", data: []});
+            if (!parent) return res.json({message: "Fetched Exams", ...listRows([], res.locals.page)});
             const parentStudents = await prisma.parentStudent.findMany({
                 where: { parentId: parent.id },
                 select: { studentId: true }
             });
             const studentIds = parentStudents.map((p) => p.studentId);
             parentStudentIds = studentIds;
-            if (studentIds.length === 0) return res.json({message: "Fetched Exams", data: []});
+            if (studentIds.length === 0) return res.json({message: "Fetched Exams", ...listRows([], res.locals.page)});
             const parentClasses = await prisma.student.findMany({
                 where: { id: { in: studentIds } },
                 select: { classId: true }
@@ -58,7 +59,7 @@ router.get("/get-exams", auth, async(req: AuthRequest, res: Response) => {
         }
 
         const exams = await prisma.exam.findMany({
-            where: classIds ? { classId: { in: classIds } } : undefined,
+            where: { AND: [classIds ? { classId: { in: classIds } } : {}, pageFilter(res.locals.page)] },
             include: {
                 subject: true,
                 class: true,
@@ -76,21 +77,22 @@ router.get("/get-exams", auth, async(req: AuthRequest, res: Response) => {
                         }
                     }
                 }
-            }
+            },
+            ...pageQuery(res.locals.page)
         })
 
-        res.json({message: "Fetched Exams", data: exams})
+        res.json({message: "Fetched Exams", ...listRows(exams, res.locals.page)})
 
     } catch(err) {
         console.log(err)
-        return res.status(400).json({message: "Error in fecthing the Exams"})
+        return res.status(500).json({message: "Error in fecthing the Exams"})
     }
 })
 
-router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
+router.get("/get-classes", auth, listPage("name", ["name", "section"]), async(req: AuthRequest, res: Response) => {
     try {
         if (!isStaffRole(req.user.role) && req.user.role !== "PARENT") {
-            return res.status(401).json({message : "UnAuthorized request"});
+            return res.status(403).json({message : "UnAuthorized request"});
         }
 
         const authUserId = resolveAuthUserId(req.user);
@@ -101,7 +103,7 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
                 where: { userId: authUserId ?? -1 },
                 select: { id: true }
             });
-            if (!teacher) return res.json({message: "Fetched classess successfully", data: []});
+            if (!teacher) return res.json({message: "Fetched classess successfully", ...listRows([], res.locals.page)});
             where = {
                 OR: [
                     { teacherId: teacher.id },
@@ -109,18 +111,18 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
                 ]
             };
         } else if (req.user.role === "PARENT") {
-            if (!authUserId) return res.json({message: "Fetched classess successfully", data: []});
+            if (!authUserId) return res.json({message: "Fetched classess successfully", ...listRows([], res.locals.page)});
             const parent = await prisma.parent.findFirst({
                 where: { userId: authUserId },
                 select: { id: true }
             });
-            if (!parent) return res.json({message: "Fetched classess successfully", data: []});
+            if (!parent) return res.json({message: "Fetched classess successfully", ...listRows([], res.locals.page)});
             const parentStudents = await prisma.parentStudent.findMany({
                 where: { parentId: parent.id },
                 select: { studentId: true }
             });
             const studentIds = parentStudents.map((p) => p.studentId);
-            if (studentIds.length === 0) return res.json({message: "Fetched classess successfully", data: []});
+            if (studentIds.length === 0) return res.json({message: "Fetched classess successfully", ...listRows([], res.locals.page)});
             const parentClasses = await prisma.student.findMany({
                 where: { id: { in: studentIds } },
                 select: { classId: true }
@@ -130,13 +132,13 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
         }
 
         const cacheKey = `get-classes:${req.user.role}:${authUserId}`;
-        const cached = serverCache.get(cacheKey);
+        const cached = !res.locals.page && serverCache.get(cacheKey);
         if (cached) {
             return res.json({message: "Fetched classess successfully", data: cached});
         }
 
         const classes = await prisma.class.findMany({
-            where,
+            where: { AND: [where, pageFilter(res.locals.page)] },
             include: {
                 teacher: {
                     select: {
@@ -187,47 +189,51 @@ router.get("/get-classes", auth, async(req: AuthRequest, res: Response) => {
                         }
                     }
                 }
-            }
+            },
+            ...pageQuery(res.locals.page)
         })
 
-        serverCache.set(cacheKey, classes, 30);
-        res.json({message: "Fetched classess successfully", data: classes})
+        if (!res.locals.page) serverCache.set(cacheKey, classes, 30);
+        res.json({message: "Fetched classess successfully", ...listRows(classes, res.locals.page)})
     } catch(err) {
         console.log(err)
-        return res.status(400).json({message: "Error in fetching the classes"});
+        return res.status(500).json({message: "Error in fetching the classes"});
     }
 })
 
-router.get("/get-teachers", auth, async(req: AuthRequest, res: Response) => {
+router.get("/get-teachers", auth, listPage("name", ["name"]), async(req: AuthRequest, res: Response) => {
     try {
         if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
-            return res.json({ message: "Fetched teachers successfully", data: [] });
+            return res.json({ message: "Fetched teachers successfully", ...listRows([], res.locals.page) });
         }
 
         const teachers = await prisma.teacher.findMany({
+            where: pageFilter(res.locals.page),
             include: {
                 user: { select: { id: true, name: true, email: true, gender: true } },
                 classes: { select: { id: true, name: true, section: true } },
                 assignedClasses: { select: { class: { select: { id: true, name: true, section: true } } } },
                 _count: { select: { assignedClasses: true, timetable: true } }
-            }
+            },
+            ...pageQuery(res.locals.page)
         })
 
-        res.json({message: "Fetched teachers successfully", data: teachers})
+        res.json({message: "Fetched teachers successfully", ...listRows(teachers, res.locals.page)})
     } catch(err) {
         console.log(err)
-        return res.status(400).json({message: "Error in fetching the teachers, Contact developer"})
+        return res.status(500).json({message: "Error in fetching the teachers, Contact developer"})
     }
 })
 
 
-router.get("/get-parents", auth, async(req: AuthRequest, res: Response) => {
+router.get("/get-parents", auth, listPage("name", ["name"]), async(req: AuthRequest, res: Response) => {
     try {
         if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
-            return res.json({ message: "Fetched parents successfully", data: [] });
+            return res.json({ message: "Fetched parents successfully", ...listRows([], res.locals.page) });
         }
 
         const parents = await prisma.parent.findMany({
+            where: pageFilter(res.locals.page),
             include: {
                 user: true,
                 students: {
@@ -235,40 +241,43 @@ router.get("/get-parents", auth, async(req: AuthRequest, res: Response) => {
                         student: true
                     }
                 }
-            }
+            },
+            ...pageQuery(res.locals.page)
         })
 
-        res.json({message: "Fetched parents successfully", data: parents})
+        res.json({message: "Fetched parents successfully", ...listRows(parents, res.locals.page)})
 
     } catch(err) {
         console.log(err)
-        return res.status(400).json({message: "Error in fecthing the parents, Contact developer"})
+        return res.status(500).json({message: "Error in fecthing the parents, Contact developer"})
     }
 })
 
-router.get("/get-buses", auth, async (req: AuthRequest, res: Response) => {
+router.get("/get-buses", auth, listPage("busNumber", ["busNumber", "routeName"]), async (req: AuthRequest, res: Response) => {
     try {
         if (!isStaffRole(req.user.role)) {
-            return res.status(401).json({ message: "UnAuthorized request" });
+            return res.status(403).json({ message: "UnAuthorized request" });
         }
         const buses = await prisma.bus.findMany({
+            where: pageFilter(res.locals.page),
             include: {
                 _count: { select: { students: true } },
                 driverUser: { select: { id: true, name: true, email: true, driver: { select: { id: true, phone: true, photo: true } } } }
             },
-            orderBy: { id: "asc" }
+            orderBy: { id: "asc" },
+            ...pageQuery(res.locals.page)
         });
-        res.json({ message: "Fetched buses successfully", data: buses });
+        res.json({ message: "Fetched buses successfully", ...listRows(buses, res.locals.page) });
     } catch (err) {
         console.log(err);
-        return res.status(400).json({ message: "Error in fetching buses" });
+        return res.status(500).json({ message: "Error in fetching buses" });
     }
 });
 
-router.get("/get-marks", auth, async(req: AuthRequest, res: Response) => {
+router.get("/get-marks", auth, listPage("examId", ["examId", "marks", "studentId"]), async(req: AuthRequest, res: Response) => {
     try {
         if (!isStaffRole(req.user.role) && req.user.role !== "PARENT") {
-            return res.status(401).json({message : "UnAuthorized request"});
+            return res.status(403).json({message : "UnAuthorized request"});
         }
 
         const authUserId = resolveAuthUserId(req.user);
@@ -283,7 +292,7 @@ router.get("/get-marks", auth, async(req: AuthRequest, res: Response) => {
                 where: { userId: authUserId ?? -1 },
                 select: { id: true }
             });
-            if (!teacher) return res.json({message: "Fetched marks successfully", data: []});
+            if (!teacher) return res.json({message: "Fetched marks successfully", ...listRows([], res.locals.page)});
             const teacherClasses = await prisma.class.findMany({
                 where: { OR: [{ teacherId: teacher.id }, { teachers: { some: { teacherId: teacher.id } } }] },
                 select: { id: true }
@@ -291,12 +300,12 @@ router.get("/get-marks", auth, async(req: AuthRequest, res: Response) => {
             const classIds = teacherClasses.map((c) => c.id);
             where = { exam: { classId: { in: classIds } } };
         } else if (req.user.role === "PARENT") {
-            if (!authUserId) return res.json({message: "Fetched marks successfully", data: []});
+            if (!authUserId) return res.json({message: "Fetched marks successfully", ...listRows([], res.locals.page)});
             const parent = await prisma.parent.findFirst({
                 where: { userId: authUserId },
                 select: { id: true }
             });
-            if (!parent) return res.json({message: "Fetched marks successfully", data: []});
+            if (!parent) return res.json({message: "Fetched marks successfully", ...listRows([], res.locals.page)});
             where = {
                 student: { parents: { some: { parentId: parent.id } } },
                 exam: { isReleased: true }
@@ -304,27 +313,28 @@ router.get("/get-marks", auth, async(req: AuthRequest, res: Response) => {
         }
 
         const marks = await prisma.mark.findMany({
-            where,
+            where: { AND: [where, pageFilter(res.locals.page)] },
             include : {
                 student: req.user.role === "TEACHER"
                     ? { select: { id: true, name: true, studentCode: true, classId: true, class: { select: { id: true, name: true, section: true } } } }
                     : true,
                 exam: true
-            }
+            },
+            ...pageQuery(res.locals.page)
         })
         
-        res.json({message: "Fetched marks successfully", data: marks})
+        res.json({message: "Fetched marks successfully", ...listRows(marks, res.locals.page)})
     } catch(err) {
         console.log(err)
-        return res.status(400).json({message: "Error in fetching the marks"})
+        return res.status(500).json({message: "Error in fetching the marks"})
     }
 })
 
 
-router.get("/get-subjects", auth, async (req: AuthRequest, res: Response) => {
+router.get("/get-subjects", auth, listPage("name", ["name"]), async (req: AuthRequest, res: Response) => {
     try {
         if (!isStaffRole(req.user.role) && req.user.role !== "PARENT") {
-            return res.status(401).json({ message: "UnAuthorized request" });
+            return res.status(403).json({ message: "UnAuthorized request" });
         }
 
         const authUserId = resolveAuthUserId(req.user);
@@ -335,25 +345,25 @@ router.get("/get-subjects", auth, async (req: AuthRequest, res: Response) => {
                 where: { userId: authUserId ?? -1 },
                 select: { id: true }
             });
-            if (!teacher) return res.json({message: "Fetched subjects successfully", data: []});
+            if (!teacher) return res.json({message: "Fetched subjects successfully", ...listRows([], res.locals.page)});
             const teacherClasses = await prisma.class.findMany({
                 where: { teacherId: teacher.id },
                 select: { id: true }
             });
             classIds = teacherClasses.map((c) => c.id);
         } else if (req.user.role === "PARENT") {
-            if (!authUserId) return res.json({message: "Fetched subjects successfully", data: []});
+            if (!authUserId) return res.json({message: "Fetched subjects successfully", ...listRows([], res.locals.page)});
             const parent = await prisma.parent.findFirst({
                 where: { userId: authUserId },
                 select: { id: true }
             });
-            if (!parent) return res.json({message: "Fetched subjects successfully", data: []});
+            if (!parent) return res.json({message: "Fetched subjects successfully", ...listRows([], res.locals.page)});
             const parentStudents = await prisma.parentStudent.findMany({
                 where: { parentId: parent.id },
                 select: { studentId: true }
             });
             const studentIds = parentStudents.map((p) => p.studentId);
-            if (studentIds.length === 0) return res.json({message: "Fetched subjects successfully", data: []});
+            if (studentIds.length === 0) return res.json({message: "Fetched subjects successfully", ...listRows([], res.locals.page)});
             const parentClasses = await prisma.student.findMany({
                 where: { id: { in: studentIds } },
                 select: { classId: true }
@@ -362,7 +372,7 @@ router.get("/get-subjects", auth, async (req: AuthRequest, res: Response) => {
         }
 
         const subjects = await prisma.subject.findMany({
-            where: classIds ? { classsubject: { some: { classId: { in: classIds } } } } : undefined,
+            where: { AND: [classIds ? { classsubject: { some: { classId: { in: classIds } } } } : {}, pageFilter(res.locals.page)] },
             include: {
                 exams: {
                     select: {
@@ -378,26 +388,27 @@ router.get("/get-subjects", auth, async (req: AuthRequest, res: Response) => {
                         subject: true
                     }
                 }
-            }
+            },
+            ...pageQuery(res.locals.page)
         });
 
         res.json({
             message: "Fetched subjects successfully",
-            data: subjects
+            ...listRows(subjects, res.locals.page)
         });
 
     } catch (err) {
         console.log(err);
-        return res.status(400).json({
+        return res.status(500).json({
             message: "Error in fetching the subject"
         });
     }
 });
 
-router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
+router.get("/get-fees", auth, listPage("title", ["title", "createdAt", "total"]), async(req: AuthRequest, res: Response) => {
     try {
         if (!isStaffRole(req.user.role) && req.user.role !== "PARENT") {
-            return res.status(401).json({message : "UnAuthorized request"});
+            return res.status(403).json({message : "UnAuthorized request"});
         }
         if (req.user.role === "TEACHER") {
             return res.status(403).json({message: "Teachers do not have access to fee records"});
@@ -411,12 +422,12 @@ router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
         let where: any = {};
 
         if (req.user.role === "PARENT") {
-            if (!authUserId) return res.json({message: "Fetched fees successfully", data: []});
+            if (!authUserId) return res.json({message: "Fetched fees successfully", ...listRows([], res.locals.page)});
             const parent = await prisma.parent.findFirst({
                 where: { userId: authUserId },
                 select: { id: true }
             });
-            if (!parent) return res.json({message: "Fetched fees successfully", data: []});
+            if (!parent) return res.json({message: "Fetched fees successfully", ...listRows([], res.locals.page)});
             where = {
                 student: {
                     parents: {
@@ -429,13 +440,13 @@ router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
         }
 
         const feeCacheKey = `get-fees:${req.user.role}:${authUserId}`;
-        const cachedFees = serverCache.get(feeCacheKey);
+        const cachedFees = !res.locals.page && serverCache.get(feeCacheKey);
         if (cachedFees) {
             return res.json({message: "Fetched fees successfully", data: cachedFees});
         }
 
         const fees = await prisma.fee.findMany({
-            where,
+            where: { AND: [where, pageFilter(res.locals.page)] },
             include: {
                 student: {
                     include: {
@@ -453,21 +464,22 @@ router.get("/get-fees", auth, async(req: AuthRequest, res: Response) => {
             },
             orderBy: {
                 createdAt: "desc"
-            }
+            },
+            ...pageQuery(res.locals.page)
         });
 
-        serverCache.set(feeCacheKey, fees, 30);
-        return res.json({message: "Fetched fees successfully", data: fees});
+        if (!res.locals.page) serverCache.set(feeCacheKey, fees, 30);
+        return res.json({message: "Fetched fees successfully", ...listRows(fees, res.locals.page)});
     } catch(err) {
         console.log(err)
-        return res.status(400).json({message: "Error in fetching the fees"});
+        return res.status(500).json({message: "Error in fetching the fees"});
     }
 })
 
-router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
+router.get("/get-students", auth, listPage("name", ["name", "studentCode"]), async (req: AuthRequest, res: Response) => {
     try {
         if (!isStaffRole(req.user.role) && req.user.role !== "PARENT") {
-            return res.status(401).json({ message: "UnAuthorized request" });
+            return res.status(403).json({ message: "UnAuthorized request" });
         }
 
         const authUserId = resolveAuthUserId(req.user);
@@ -482,7 +494,7 @@ router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
                 where: { userId: authUserId ?? -1 },
                 select: { id: true }
             });
-            if (!teacher) return res.json({ message: "Fetched students successfully", data: [] });
+            if (!teacher) return res.json({ message: "Fetched students successfully", ...listRows([], res.locals.page) });
 
             const teacherClasses = await prisma.class.findMany({
                 where: {
@@ -494,21 +506,21 @@ router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
                 select: { id: true }
             });
             teacherClassIds = teacherClasses.map((c) => c.id).sort((a, b) => a - b);
-            if (teacherClassIds.length === 0) return res.json({ message: "Fetched students successfully", data: [] });
+            if (teacherClassIds.length === 0) return res.json({ message: "Fetched students successfully", ...listRows([], res.locals.page) });
             where = { classId: { in: teacherClassIds } };
         } else if (req.user.role === "PARENT") {
-            if (!authUserId) return res.json({ message: "Fetched students successfully", data: [] });
+            if (!authUserId) return res.json({ message: "Fetched students successfully", ...listRows([], res.locals.page) });
             const parent = await prisma.parent.findFirst({
                 where: { userId: authUserId },
                 select: { id: true }
             });
-            if (!parent) return res.json({ message: "Fetched students successfully", data: [] });
+            if (!parent) return res.json({ message: "Fetched students successfully", ...listRows([], res.locals.page) });
             const parentStudents = await prisma.parentStudent.findMany({
                 where: { parentId: parent.id },
                 select: { studentId: true }
             });
             const studentIds = parentStudents.map((p) => p.studentId);
-            if (studentIds.length === 0) return res.json({ message: "Fetched students successfully", data: [] });
+            if (studentIds.length === 0) return res.json({ message: "Fetched students successfully", ...listRows([], res.locals.page) });
             where = { id: { in: studentIds } };
         }
 
@@ -517,13 +529,13 @@ router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
         const studentCacheKey = req.user.role === "TEACHER"
             ? `get-students:TEACHER:${authUserId}:${teacherClassIds.join(",")}`
             : `get-students:${req.user.role}:${authUserId}`;
-        const cachedStudents = serverCache.get(studentCacheKey);
+        const cachedStudents = !res.locals.page && serverCache.get(studentCacheKey);
         if (cachedStudents) {
             return res.json({ message: "Fetched students successfully", data: cachedStudents });
         }
 
         const students = await prisma.student.findMany({
-            where,
+            where: { AND: [where, pageFilter(res.locals.page)] },
             include: {
                 bus: true,
                 class: {
@@ -553,7 +565,8 @@ router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
             },
             orderBy: {
                 name: "asc"
-            }
+            },
+            ...pageQuery(res.locals.page)
         });
 
         const safeStudents = req.user.role === "TEACHER"
@@ -572,11 +585,11 @@ router.get("/get-students", auth, async (req: AuthRequest, res: Response) => {
                 };
             })
             : students;
-        serverCache.set(studentCacheKey, safeStudents, 30);
-        return res.json({ message: "Fetched students successfully", data: safeStudents });
+        if (!res.locals.page) serverCache.set(studentCacheKey, safeStudents, 30);
+        return res.json({ message: "Fetched students successfully", ...listRows(safeStudents, res.locals.page) });
     } catch (err) {
         console.log(err);
-        return res.status(400).json({ message: "Error in fetching students" });
+        return res.status(500).json({ message: "Error in fetching students" });
     }
 });
 

@@ -20,7 +20,7 @@ const resolveParentType = (relation?: string | null) => {
 router.post("/create-parent", auth, async(req: AuthRequest, res: Response) => {
     try {
         if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
-            return res.status(400).json({message : "UnAuthorized request"});
+            return res.status(403).json({message : "UnAuthorized request"});
         }
 
         const { email, gender, name, relation, phone1, phone2, type, studentId } = req.body;
@@ -356,12 +356,11 @@ router.get("/me", auth, async (req: AuthRequest, res: Response) => {
       return res.status(404).json({ message: "User not found" });
    }
 
-   const { otp: _uOtp, otpExpiry: _uExp, ...safeUser } = user;
    const phone = user.teacher?.phone || user.parent?.phone1 || undefined;
    const allowedModules = user.userPermissions.length
       ? user.userPermissions.filter((item) => item.isAllowed).map((item) => item.module)
       : undefined;
-   const profile = { ...safeUser, phone, photoUrl: user.photoUrl || user.teacher?.photo || undefined, allowedModules };
+   const profile = { ...user, phone, photoUrl: user.photoUrl || user.teacher?.photo || undefined, allowedModules };
    res.json({ message: "User profile fetched", data: profile, user: profile });
 });
 
@@ -456,7 +455,7 @@ router.post("/me/photo", auth, async (req: AuthRequest, res: Response) => {
 router.put("/update-parent/:id", auth, async(req: AuthRequest, res: Response) => {
     try {
         if (!isExecutiveRole(req.user.role) && req.user.role !== "TEACHER" && req.user.role !== "RECEPTIONIST") {
-            return res.status(400).json({message: "UnAuthorized request"})
+            return res.status(403).json({message: "UnAuthorized request"})
         }
 
         const parentId = Number(req.params.id);
@@ -504,7 +503,7 @@ router.put("/update-parent/:id", auth, async(req: AuthRequest, res: Response) =>
 router.put("/update-student/:id", auth, async (req: AuthRequest, res: Response) => {
     try {
         if (!isExecutiveRole(req.user.role) && req.user.role !== "TEACHER" && req.user.role !== "RECEPTIONIST") {
-            return res.status(400).json({message: "UnAuthorized request"})
+            return res.status(403).json({message: "UnAuthorized request"})
         }
 
         const { photo, name, gender, dob, classId, busId, admissionno, adharnumber, mothertongue, socialcategory, bloodgroup, address, pincode, height, weight } = req.body;
@@ -618,7 +617,7 @@ router.put("/update-teacher/:id", auth, async (req: AuthRequest, res: Response) 
             !isExecutiveRole(req.user.role) &&
             req.user.role !== "RECEPTIONIST"
         ) {
-            return res.status(400).json({ message: "UnAuthorized request" });
+            return res.status(403).json({ message: "UnAuthorized request" });
         }
 
         const { name, email, phone, gender, salary, photo, photoBase64, photoMimeType } = req.body;

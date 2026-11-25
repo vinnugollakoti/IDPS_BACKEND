@@ -102,9 +102,10 @@ Qualification: NO_FORMAL_EDUCATION, PRIMARY, MIDDLE_SCHOOL, SECONDARY, HIGHER_SE
 - All request bodies are JSON.
 - IDs are numeric database IDs.
 - Date values should be sent as ISO strings unless noted otherwise.
-- Several handlers return nonstandard HTTP codes such as `600` or `700`; these are documented exactly as implemented.
+- Authentication failures use HTTP 401, insufficient permissions use 403, missing resources use 404, and rate limits use 429 with a Retry-After header.
 - Decimal values from Prisma may serialize as strings or numbers depending on Prisma/runtime behavior.
-- APIs do not currently implement pagination.
+- The nine directory lists under `/get/get-*` (students, parents, teachers, classes, subjects, exams, marks, fees and buses) accept `page` (starts at 1), `limit` (1–100, default 50), `sortBy`, `sortOrder` (asc/desc) and `search`. Supplying any of these enables database pagination and adds `pagination: { page, limit, hasMore }` to the response. Existing requests without these parameters retain their complete results. Audit logs have their own paginated contract.
+- Example: `GET /get/get-students?page=1&limit=25&search=kumar&sortBy=name&sortOrder=asc`. Search matches names, bus number, fee title or exact numeric exam ID for marks. All lists can sort by ID. Additional sort fields are name and studentCode (students), name (parents, teachers, subjects), name and section (classes), name and examDate (exams), examId, marks and studentId (marks), title, createdAt and total (fees), busNumber and routeName (buses). Equal sort values use ID as a tie-breaker.
 
 ---
 
@@ -134,11 +135,7 @@ Success response:
 
 ```json
 {
-  "message": "OTP Sent, valid for 5 minutes",
-  "data": {
-    "otp": "123456",
-    "otpExpiry": "2026-03-26T10:05:00.000Z"
-  }
+  "message": "OTP Sent, valid for 5 minutes"
 }
 ```
 
@@ -147,10 +144,11 @@ Errors:
 | Status | Message |
 |---|---|
 | `400` | `Email required` |
-| `600` | `User is not registered by the school.` |
-| `400` | `Error executing login request` |
+| `404` | Unregistered school account |
+| `500` | `LOGIN_FAILED` — account lookup or OTP processing failed |
+| `503` | `OTP_DELIVERY_UNAVAILABLE` — email service configuration, connectivity or upstream failure |
 
-Implementation note: the OTP is returned in the response as well as emailed.
+Codes are delivered by email. Only a purpose-bound HMAC digest and five-minute expiry are stored. Verification consumes the code once. Registered accounts share limits across backend instances and email OTP endpoints: five sends per fifteen minutes and ten verification attempts per ten minutes. A throttled request returns HTTP 429.
 
 ## POST `/auth/otp-verify`
 
@@ -196,12 +194,11 @@ Errors:
 
 | Status | Message |
 |---|---|
-| `400` | `User not found` |
-| `400` | `Invalid OTP` |
-| Intended `400` | `OTP expired` |
-| `400` | `Logged in failed due to server, contact developer` |
+| `400` | The sign-in code is invalid or expired |
+| `429` | Too many authentication attempts |
+| `500` | Login failed due to a server error |
+| `503` | Authentication rate-limit storage unavailable |
 
-Implementation note: expired OTP path currently calls `res.json(400).json(...)`, which is a bug.
 
 ---
 
@@ -709,10 +706,10 @@ Errors:
 
 | Status | Message |
 |---|---|
-| `400` | `UnAuthorized request` |
-| `500` | `Missing required fields` |
-| `600` | `Exam already existed try searching your exam.` |
-| `400` | `Error in creating the class` |
+| `403` | Insufficient access to the class |
+| `400` | Missing exam title or class ID, or invalid exam request |
+
+An existing matching exam is included in the success response.
 
 ## POST `/class/create-marks`
 
@@ -1296,7 +1293,7 @@ Errors:
 |---|---|
 | `403` | `Unauthorized request` |
 | `401` | `Invalid token payload` |
-| `700` | `Payment data not existed, Contact developer` |
+| `404` | `Payment data not existed, Contact developer` |
 | `403` | `Error updating payment details, Contact developer` |
 
 ## GET `/student/get-student-details-master/:id`
@@ -1867,7 +1864,7 @@ Errors:
 Important fields:
 
 ```text
-id, name, email, role, gender, otp, otpExpiry, createdAt, updatedAt
+id, name, email, role, gender, createdAt, updatedAt
 ```
 
 Relations:

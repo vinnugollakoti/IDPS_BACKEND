@@ -24,7 +24,7 @@ async function canManageClass(user: any, classId: number) {
 router.post("/create-class", auth, async(req: AuthRequest, res: Response) => {
     try {
         if (!isExecutiveRole(req.user.role)) {
-            return res.status(400).json({message : "UnAuthorized request"});
+            return res.status(403).json({message : "UnAuthorized request"});
         }
 
         const {name, section, teacherId} = req.body;
@@ -90,7 +90,7 @@ router.post("/create-class", auth, async(req: AuthRequest, res: Response) => {
 router.post("/create-subject", auth, async (req: AuthRequest, res: Response) => {
     try {
         if (!isStaffRole(req.user.role)) {
-            return res.status(400).json({message : "UnAuthorized request"});
+            return res.status(403).json({message : "UnAuthorized request"});
         }
 
         const {name, classId} = req.body;
@@ -148,7 +148,7 @@ router.post("/create-subject", auth, async (req: AuthRequest, res: Response) => 
 router.post("/create-exam", auth, async(req: AuthRequest, res: Response) => {
     try {
         if (!isStaffRole(req.user.role)) {
-            return res.status(400).json({message : "UnAuthorized request"});
+            return res.status(403).json({message : "UnAuthorized request"});
         }
 
         const { exam_name, name, totalMarks, subjectId, examDate, startDate, classId, subjects } = req.body;
@@ -312,7 +312,7 @@ router.post("/release-exam", auth, async(req: AuthRequest, res: Response) => {
 router.post("/create-marks", auth, async(req: AuthRequest, res: Response) => {
     try { 
         if (!isStaffRole(req.user.role)) {
-            return res.status(400).json({message: "Unauthorized request"});
+            return res.status(403).json({message: "Unauthorized request"});
         }
 
         const {examId, marks, studentId} = req.body;
@@ -368,7 +368,7 @@ router.post("/create-marks", auth, async(req: AuthRequest, res: Response) => {
 router.put("/update-class/:id", auth, async(req: AuthRequest, res: Response) => {
     try {
         if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
-            return res.status(400).json({message : "UnAuthorized request"});
+            return res.status(403).json({message : "UnAuthorized request"});
         }
 
         const {name, section, teacherId, teacherIds} = req.body;
@@ -610,7 +610,7 @@ router.put("/update-subject-classes/:id", auth, async(req: AuthRequest, res: Res
 router.delete("/delete-class/:id", auth, async (req: AuthRequest, res: Response) => {
     try {
         if (!isExecutiveRole(req.user.role)) {
-            return res.status(400).json({ message: "UnAuthorized request" });
+            return res.status(403).json({ message: "UnAuthorized request" });
         }
 
         const classId = Number(req.params.id);

@@ -178,7 +178,17 @@ model TeacherAttendance {
   @@index([teacherId])
 }
 
+model OtpRateLimit {
+  userId  Int
+  action  String
+  count   Int
+  resetAt DateTime @db.Timestamptz
+  user    User @relation(fields: [userId], references: [id], onDelete: Cascade)
+  @@id([userId, action])
+}
+
 model User {
+  otpRateLimits OtpRateLimit[]
   id        Int       @id @default(autoincrement())
   name      String
   email     String    @unique
