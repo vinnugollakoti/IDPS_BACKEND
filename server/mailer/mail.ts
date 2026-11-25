@@ -1,42 +1,33 @@
 import dotenv from "dotenv";
 dotenv.config();
 
-const MAIL_API = process.env.MAIL_API || "none";
+export class MailDeliveryError extends Error {
+  constructor(readonly reason: string, readonly upstreamStatus?: number) {
+    super("Email delivery is temporarily unavailable");
+  }
+}
 
 async function sendMail(to: string, subject: string, html: string) {
-  if (!MAIL_API || MAIL_API === "none") {
-    throw new Error("MAIL_API is not configured");
+  const { MAIL_API, MAIL_ID, MAIL_PASSWORD } = process.env;
+  if (!MAIL_API || !URL.canParse(MAIL_API) || !/^https?:\/\//i.test(MAIL_API) || !MAIL_ID || !MAIL_PASSWORD) {
+    throw new MailDeliveryError("mail_configuration");
   }
 
+  let response: Response;
   try {
-    const response = await fetch(MAIL_API, {
+    response = await fetch(MAIL_API, {
       method: "POST",
-      headers: {
-        "Content-Type": "application/json",
-      },
+      signal: AbortSignal.timeout(10_000),
+      headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
-        to,
-        subject,
-        html,
-        config: {
-          email: process.env.MAIL_ID,
-          pass: process.env.MAIL_PASSWORD,
-          from: `'IDPS Login' <${process.env.MAIL_ID}>`,
-        },
+        to, subject, html,
+        config: { email: MAIL_ID, pass: MAIL_PASSWORD, from: `'IDPS Login' <${MAIL_ID}>` },
       }),
     });
-
-    if (!response.ok) {
-      const errText = await response.text().catch(() => "Unknown Mail API Error");
-      console.error("Mail API Error:", errText);
-      throw new Error(`Mail API returned ${response.status}: ${errText}`);
-    }
-
-    return { status: "ok" };
-  } catch (err) {
-    console.error("Mail Network Error:", err);
-    throw err;
+  } catch (error) {
+    throw new MailDeliveryError(error instanceof Error && error.name === "TimeoutError" ? "mail_timeout" : "mail_connection");
   }
+  if (!response.ok) throw new MailDeliveryError("mail_rejected", response.status);
 }
 
 /**

@@ -1,14 +1,41 @@
 import express, {Request, Response} from "express";
-import { createHash, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHmac, scryptSync, timingSafeEqual } from "node:crypto";
 import { randomInt } from "node:crypto";
 import prisma from "../prisma/client";
 import { AuthRequest, auth } from "../middleware/auth";
-import {sendMOtpail} from "../mailer/mail"
+import { MailDeliveryError, sendMOtpail } from "../mailer/mail";
 import { generateToken } from "../middleware/jwt";
 import { authRateLimit } from "../middleware/authRateLimit";
 const router = express.Router();
 const parentReviewEmail = "play-parent@review.invalid";
-const parentOtpHash = (email: string, otp: string) => createHash("sha256").update(`${process.env.JWT_SECRET}:${email}:${otp}`).digest("hex");
+const otpDigest = (scope: "parent" | "general", email: string, otp: string) =>
+    createHmac("sha256", process.env.JWT_SECRET!).update(JSON.stringify([scope, email, otp])).digest("hex");
+
+async function emailOtp(user: { id: number; email: string }, scope: "parent" | "general") {
+    const code = randomInt(100000, 1000000).toString();
+    const digest = otpDigest(scope, user.email, code);
+    await prisma.user.update({
+        where: { id: user.id },
+        data: { otp: digest, otpExpiry: new Date(Date.now() + 5 * 60_000) },
+    });
+    try {
+        await sendMOtpail(user.email, code);
+    } catch (error) {
+        await prisma.user.updateMany({
+            where: { id: user.id, otp: digest },
+            data: { otp: null, otpExpiry: null },
+        });
+        throw error;
+    }
+}
+
+async function consumeOtp(id: number, digest: string) {
+    const consumed = await prisma.user.updateMany({
+        where: { id, otp: digest, otpExpiry: { gt: new Date() } },
+        data: { otp: null, otpExpiry: null },
+    });
+    return consumed.count === 1;
+}
 
 const verifyReviewerPassword = (password: string, stored: string) => {
     const [salt, encoded] = stored.split(":");
@@ -33,13 +60,12 @@ router.post("/play-review-login", authRateLimit({ action: "review-login", window
         const user = await prisma.user.findUnique({ where: { email: configuredEmail }, include: { teacher: true, parent: true, userPermissions: { select: { module: true, isAllowed: true } } } });
         if (!user || user.role !== "CHAIRMAN") return res.status(403).json({ message: "Review account is not configured correctly" });
         const token = generateToken(user.id, user.role);
-        const { otp: _otp, otpExpiry: _expiry, ...safeUser } = user;
         // Keep the Play review account away from live fee data even if its
         // permission rows are recreated or missing during a deployment.
         const allowedModules = user.userPermissions.length
             ? user.userPermissions.filter((item) => item.isAllowed && item.module !== "fees").map((item) => item.module)
             : ["students", "circulars", "exams", "classes", "attendance", "timetable", "notifications", "permission", "homework", "whatsapp", "spending", "complaints", "downloads", "profile"];
-        return res.json({ message: "Review login successful", token, user: { ...safeUser, photoUrl: user.photoUrl || user.teacher?.photo || undefined, allowedModules } });
+        return res.json({ message: "Review login successful", token, user: { ...user, photoUrl: user.photoUrl || user.teacher?.photo || undefined, allowedModules } });
     } catch {
         return res.status(401).json({ message: "Invalid review credentials" });
     }
@@ -65,23 +91,16 @@ router.post("/login", authRateLimit({ action: "otp-request", windowMs: 15 * 60 *
             });
         }
 
-        const otp = randomInt(100000, 1000000).toString();
-        const otpExpiry = new Date(Date.now() + 5 * 60 * 1000);
-
-        await prisma.user.update({
-            where : {email},
-            data: {
-                otp,
-                otpExpiry
-            }
-        });
-
-        await sendMOtpail(email, otp);
-
+        await emailOtp(user, "general");
         res.json({ message: "OTP Sent, valid for 5 minutes" });
     } catch (err) {
-        console.log(err)
-        return res.status(400).json({message: "Error executing login request"});
+        if (err instanceof MailDeliveryError) {
+            console.error("Staff login email failed", { reason: err.reason, upstreamStatus: err.upstreamStatus });
+            return res.status(503).json({ code: "OTP_DELIVERY_UNAVAILABLE", message: "We could not send your sign-in email. Please try again later." });
+        }
+        const prismaCode = err instanceof Error && "code" in err ? err.code : undefined;
+        console.error("Staff login failed", { prismaCode });
+        return res.status(500).json({ code: "LOGIN_FAILED", message: "Error executing login request" });
     }
 })
 
@@ -93,16 +112,11 @@ router.post("/parent/email-otp/request", authRateLimit({ action: "parent-email-o
     }
     try {
         const user = await prisma.user.findFirst({ where: { email, role: "PARENT", parent: { isNot: null } }, select: { id: true, email: true } });
-        if (user) {
-            const otp = randomInt(100000, 1000000).toString();
-            const otpExpiry = new Date(Date.now() + 5 * 60 * 1000);
-            await prisma.user.update({ where: { id: user.id }, data: { otp: parentOtpHash(email, otp), otpExpiry } });
-            await sendMOtpail(user.email, otp);
-        }
+        if (user) await emailOtp(user, "parent");
         // Keep account existence private; the code is delivered only for a registered parent.
         return res.json({ message: "If a parent account matches that email, a sign-in code has been sent." });
     } catch (error) {
-        console.error("POST parent email OTP request", error);
+        console.error("Parent email OTP delivery failed");
         return res.json({ message: "If a parent account matches that email, a sign-in code has been sent." });
     }
 });
@@ -130,24 +144,16 @@ router.post("/parent/email-otp/verify", authRateLimit({ action: "parent-email-ot
         }
         const user = await prisma.user.findFirst({
             where: { email, role: "PARENT", parent: { isNot: null } },
-            select: { id: true, name: true, email: true, role: true, otp: true, otpExpiry: true },
+            select: { id: true, name: true, email: true, role: true },
         });
-        const candidateHash = parentOtpHash(email, otp);
-        const storedHash = user?.otp || "";
-        const hashMatches = /^[a-f0-9]{64}$/.test(storedHash)
-            && timingSafeEqual(Buffer.from(storedHash, "hex"), Buffer.from(candidateHash, "hex"));
-        if (!user || !hashMatches || !user.otpExpiry || user.otpExpiry <= new Date()) {
+        const candidateHash = otpDigest("parent", email, otp);
+        if (!user || !await consumeOtp(user.id, candidateHash)) {
             return res.status(400).json({ message: "The sign-in code is invalid or expired" });
         }
-        const consumed = await prisma.user.updateMany({
-            where: { id: user.id, otp: candidateHash, otpExpiry: { gt: new Date() } },
-            data: { otp: null, otpExpiry: null },
-        });
-        if (consumed.count !== 1) return res.status(400).json({ message: "The sign-in code is invalid or expired" });
         const token = generateToken(user.id, "PARENT");
         return res.json({ message: "Parent sign-in successful", token, user: { id: user.id, name: user.name, email: user.email, role: "PARENT" } });
     } catch (error) {
-        console.error("POST parent email OTP verify", error);
+        console.error("Parent email OTP verification failed");
         return res.status(503).json({ message: "We could not verify the sign-in code right now. Please try again." });
     }
 });
@@ -168,35 +174,18 @@ router.post("/otp-verify", authRateLimit({ action: "otp-verify", windowMs: 10 * 
             }
         })
 
-        if (!user) {
-            return res.status(400).json({message: "User not found"});
+        if (!user || !/^\d{6}$/.test(otp) || !await consumeOtp(user.id, otpDigest("general", email, otp))) {
+            return res.status(400).json({ message: "The sign-in code is invalid or expired" });
         }
-        if (user.otp !== otp) {
-            return res.status(400).json({message: "Invalid OTP"});
-        }
-        if (!user.otpExpiry || user.otpExpiry < new Date()) {
-            return res.status(400).json({message: "OTP expired"});
-        }
-
         const token = generateToken(user.id, user.role);
-
-        await prisma.user.update({
-            where: {id: user.id},
-            data: {
-                otp: null,
-                otpExpiry:null
-            }
-        })
-
-        const { otp: _uOtp, otpExpiry: _uExp, ...safeUser } = user;
         const allowedModules = user.userPermissions.length
             ? user.userPermissions.filter((item) => item.isAllowed).map((item) => item.module)
             : undefined;
-        res.json({message: "Logged in Successfully", token, user: { ...safeUser, photoUrl: user.photoUrl || user.teacher?.photo || undefined, allowedModules }}) 
+        res.json({message: "Logged in Successfully", token, user: { ...user, photoUrl: user.photoUrl || user.teacher?.photo || undefined, allowedModules }})
 
     } catch(err) {
-        console.log(err)
-        return res.status(400).json({message: "Logged in failed due to server, contact developer"});
+        console.error("Authentication service failed");
+        return res.status(500).json({message: "Logged in failed due to server, contact developer"});
     }
 })
 

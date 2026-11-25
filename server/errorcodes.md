@@ -1,25 +1,16 @@
+HTTP response codes
 
-
-400 = unauthorized access
-500 = missing fields
-600 = exam already existed
-404 = not existed
-
-
-
-PRINCIPAL TOKEN:
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjEsInJvbGUiOiJQUklOQ0lQQUwiLCJpYXQiOjE3NzMyOTUzMDEsImV4cCI6MTc3NTg4NzMwMX0.DHOL7cam8-Pvph9HBq9f5ldHglWrqSElMLEj94ikT68
----------------
-RECEPTIONIST TOKEN:
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9eyJ1c2VySWQiOjIsInJvbGUiOiJSRUNFUFRJT05JU1QiLCJpYXQiOjE3NzMyOTUzMDEsImV4cCI6MTc3NTg4NzMwMX0.bITODaEcH5CQhOnOC1P6Atru-YfhwVQgNViFu2jDqjs
----------------
-TEACHER TOKEN:
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjMsInJvbGUiOiJURUFDSEVSIiwiaWF0IjoxNzczMjk1MzAxLCJleHAiOjE3NzU4ODczMDF9.tdZ0Qal7fKYNG_S2_KLFqL3ftu_HYZ6f3vt5q12wr0g
----------------
-PARENT TOKEN:
-eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJ1c2VySWQiOjQsInJvbGUiOiJQQVJFTlQiLCJpYXQiOjE3NzMyOTUzMDEsImV4cCI6MTc3NTg4NzMwMX0.H3diCB6ty_X2fvyVXknZdAry1krq04KQKRiDs7SsyIk
----------------
-
+200 = success
+201 = created
+400 = invalid request
+401 = authentication required or invalid token
+403 = insufficient permissions
+404 = resource missing
+409 = conflict
+422 = validation failed
+429 = rate limit exceeded
+500 = internal error
+503 = service unavailable
 
 CREARTION
 Parent ( completed ) - user.ts
