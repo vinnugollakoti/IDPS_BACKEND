@@ -6,6 +6,10 @@ import {archive,freeBytes,history,removeFile,store} from "../lib/backup/store";
 import {start} from "../lib/backup/run";
 
 const router=express.Router();
+router.use((_req, res, next) => {
+  res.setHeader("Cache-Control", "private, no-store");
+  next();
+});
 const tickets=new Map<string,{job:string;actor:number;expires:number}>();
 const digest=(token:string)=>createHash("sha256").update(token).digest("hex");
 const transfers=new Set<string>();
@@ -23,9 +27,8 @@ function expireLocalCopies(){
 setInterval(()=>{if(process.env.BACKUP_MOUNT)try{expireLocalCopies();}catch{console.error("Backup disk maintenance unavailable");}},3600000).unref();
 
 async function permitted(id:number) {
-  if(!(process.env.BACKUP_ADMIN_IDS||"").split(",").map(v=>v.trim()).includes(String(id)))return false;
   const user=await prisma.user.findUnique({where:{id},select:{role:true,email:true}});
-  return !!user && isExecutiveRole(user.role) && user.email.toLowerCase()!==process.env.PLAY_REVIEW_EMAIL?.trim().toLowerCase();
+  return !!user && (isExecutiveRole(user.role) || user.role === "RECEPTIONIST") && user.email.toLowerCase()!==process.env.PLAY_REVIEW_EMAIL?.trim().toLowerCase();
 }
 
 // A browser navigation streams to the download manager without storing gigabytes
@@ -48,15 +51,8 @@ router.post("/file",async(req:Request,res:Response)=>{
   });
 });
 router.use(auth,async(req:AuthRequest,res,next)=>{
-  if (!isExecutiveRole(req.user.role)) {
-    return res.status(403).json({ message: "An executive account with backup access is required." });
-  }
-  const id = Number(req.user.userId);
-  if (!process.env.BACKUP_ADMIN_IDS?.split(",").some(value => value.trim())) {
-    return res.status(503).json({ code: "BACKUP_ACCESS_UNCONFIGURED", message: `Backup access has not been configured on the primary server. Ask the server administrator to configure BACKUP_ADMIN_IDS. Your user ID is ${id}.` });
-  }
-  if (!await permitted(id)) {
-    return res.status(403).json({ message: `Your account does not have backup access. Ask the server administrator to check your executive role and BACKUP_ADMIN_IDS for user ID ${id}.` });
+  if (!await permitted(Number(req.user.userId))) {
+    return res.status(403).json({ message: "Your account does not have permission to manage school backups." });
   }
   next();
 });
