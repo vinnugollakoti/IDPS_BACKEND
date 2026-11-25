@@ -2,13 +2,15 @@ import dotenv from "dotenv";
 dotenv.config();
 
 export class MailDeliveryError extends Error {
-  constructor(readonly reason: string, readonly upstreamStatus?: number) {
+  constructor(readonly reason: string, readonly upstreamStatus?: number, readonly relayRequestId?: string) {
     super("Email delivery is temporarily unavailable");
   }
 }
 
 async function sendMail(to: string, subject: string, html: string) {
-  const { MAIL_API, MAIL_ID, MAIL_PASSWORD } = process.env;
+  const MAIL_API = process.env.MAIL_API?.trim();
+  const MAIL_ID = process.env.MAIL_ID?.trim();
+  const { MAIL_PASSWORD } = process.env;
   if (!MAIL_API || !URL.canParse(MAIL_API) || !/^https?:\/\//i.test(MAIL_API) || !MAIL_ID || !MAIL_PASSWORD) {
     throw new MailDeliveryError("mail_configuration");
   }
@@ -17,7 +19,7 @@ async function sendMail(to: string, subject: string, html: string) {
   try {
     response = await fetch(MAIL_API, {
       method: "POST",
-      signal: AbortSignal.timeout(10_000),
+      signal: AbortSignal.timeout(35_000),
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         to, subject, html,
@@ -27,7 +29,9 @@ async function sendMail(to: string, subject: string, html: string) {
   } catch (error) {
     throw new MailDeliveryError(error instanceof Error && error.name === "TimeoutError" ? "mail_timeout" : "mail_connection");
   }
-  if (!response.ok) throw new MailDeliveryError("mail_rejected", response.status);
+  if (!response.ok) {
+    throw new MailDeliveryError("mail_rejected", response.status, response.headers.get("x-amzn-requestid") || undefined);
+  }
 }
 
 /**

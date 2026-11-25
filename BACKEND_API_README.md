@@ -148,7 +148,9 @@ Errors:
 | `500` | `LOGIN_FAILED` — account lookup or OTP processing failed |
 | `503` | `OTP_DELIVERY_UNAVAILABLE` — email service configuration, connectivity or upstream failure |
 
-Codes are delivered by email. Only a purpose-bound HMAC digest and five-minute expiry are stored. Verification consumes the code once. Registered accounts share limits across backend instances and email OTP endpoints: five sends per fifteen minutes and ten verification attempts per ten minutes. A throttled request returns HTTP 429.
+A relay timeout returns HTTP 202 with a delivery-pending message. A code that arrives can still be verified within the original five-minute window. The backend makes one delivery attempt per request. Confirmed relay errors return HTTP 503.
+
+Codes are delivered by email. Only a purpose-bound HMAC digest and five-minute expiry are stored. Verification consumes the code once. Registered accounts share limits across backend instances and email OTP endpoints: three send requests per fifteen-minute window and ten verification attempts per ten minutes. A throttled request returns HTTP 429.
 
 ## POST `/auth/otp-verify`
 
