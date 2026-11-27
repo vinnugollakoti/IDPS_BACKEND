@@ -1,3 +1,4 @@
+import { assignedClasses } from "../lib/studentProfileUpdate";
 import express, {Request, Response} from "express";
 import prisma from "../prisma/client";
 import { AuthRequest, auth, isExecutiveRole } from "../middleware/auth";
@@ -255,11 +256,11 @@ const parseFlexibleDate = (value?: string | null) => {
     return Number.isNaN(parsed.getTime()) ? null : parsed;
 };
 
-const parseIntegerLike = (value?: string | number | null) => {
+const parseMeasurement = (value?: string | number | null) => {
     if (value === null || value === undefined) return null;
     const match = String(value).match(/\d+(?:\.\d+)?/);
     if (!match) return null;
-    const numberValue = Math.floor(Number(match[0]));
+    const numberValue = Number(match[0]);
     return Number.isFinite(numberValue) ? numberValue : null;
 };
 
@@ -386,8 +387,8 @@ const normalizeImportRow = (row: ImportStudentInput, classId: number, rowNumber:
     const socialcategory = normalizeSocialCategory(row.socialcategory);
     const bloodgroup = normalizeBloodGroup(row.bloodgroup);
     const admissiondate = parseFlexibleDate(row.admissiondate);
-    const height = parseIntegerLike(row.height);
-    const weight = parseIntegerLike(row.weight);
+    const height = parseMeasurement(row.height);
+    const weight = parseMeasurement(row.weight);
     const address = normalizeText(row.address);
 
     const errors: string[] = [];
@@ -1745,63 +1746,15 @@ router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res:
             return res.status(400).json({message: "Invalid student id"});
         }
 
-        // Authorize class membership before loading the full record. This
-        // prevents a teacher from probing or retrieving another class's PII.
-        if (req.user.role === "TEACHER") {
-            const authUserId = resolveAuthUserId(req.user);
-            const teacher = await prisma.teacher.findUnique({
-                where: { userId: authUserId ?? -1 },
-                select: { id: true },
-            });
-            const requestedStudent = await prisma.student.findUnique({ where: { id: studentId }, select: { classId: true } });
-            if (!teacher || !requestedStudent) return res.status(403).json({ message: "You are not assigned to this student" });
-            const assignedClass = await prisma.class.findFirst({
-                where: {
-                    id: requestedStudent.classId,
-                    OR: [{ teacherId: teacher.id }, { teachers: { some: { teacherId: teacher.id } } }],
-                },
-                select: { id: true },
-            });
-            if (!assignedClass) return res.status(403).json({ message: "You are not assigned to this student" });
-        }
-
-        if (req.user.role === "PARENT") {
-            const authUserId = resolveAuthUserId(req.user);
-            if (!authUserId) {
-                return res.status(401).json({ message: "Invalid token payload" });
-            }
-
-            const parent = await prisma.parent.findFirst({
-                where: { userId: authUserId },
-                select: { id: true }
-            });
-
-            if (!parent) {
-                return res.status(403).json({message: "Unauthorized request"});
-            }
-
-            const linked = await prisma.parentStudent.findUnique({
-                where: {
-                    parentId_studentId: {
-                        parentId: parent.id,
-                        studentId
-                    }
-                },
-                select: { studentId: true }
-            });
-
-            if (!linked) {
-                return res.status(403).json({message: "Unauthorized request"});
-            }
-        }
-
-        const student: any = await prisma.student.findUnique({
-            where: {id: studentId},
+        const authUserId = resolveAuthUserId(req.user) ?? -1;
+        const limited = req.user.role === "TEACHER" || req.user.role === "PARENT";
+        const student: any = await prisma.student.findFirst({
+            where: {id: studentId, ...(req.user.role === "TEACHER" ? {class: assignedClasses(authUserId)} : req.user.role === "PARENT" ? {parents:{some:{parent:{userId:authUserId}}}} : {})},
             include: {
                 class: {
                     include: {
                         teacher: {
-                            include: { user: { select: { id: true, name: true, email: true, gender: true, photoUrl: true } } }
+                            select: {id:true,name:true,phone:true}
                         }
                     }
                 },
@@ -1810,6 +1763,7 @@ router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res:
                     include: {
                         parent: {
                             include: {
+                                ...(req.user.role === "TEACHER" ? { _count: { select: { students: { where: { student: {class:{NOT: assignedClasses(authUserId)}} } } } } } : {}),
                                 user: { select: { id: true, name: true, email: true, gender: true, photoUrl: true } }
                             }
                         }
@@ -1841,7 +1795,7 @@ router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res:
                                 subject: true,
                                 class: {
                                     include: {
-                                        teacher: true
+                                        teacher: {select:{id:true,name:true}}
                                     }
                                 }
                             }
@@ -1852,7 +1806,7 @@ router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res:
         })
 
         if (!student) {
-            return res.status(400).json({message: "Student not existed"});
+            return res.status(limited ? 403 : 404).json({message: "Student is unavailable"});
         }
 
         const feeSummary = req.user.role === "TEACHER" ? [] : student.feeDetails.map((fee: any) => {

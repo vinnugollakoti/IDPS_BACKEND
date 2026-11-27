@@ -1,0 +1,53 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import {randomUUID,randomBytes} from 'node:crypto';
+import {once} from 'node:events';
+import express from 'express';
+
+test('profile edits persist, clear nullable fields, and respect live student and guardian scope',async()=>{
+  const target=new URL(process.env.FEEDBACK_TEST_URL||'about:blank');
+  assert.equal(target.protocol,'postgresql:');assert.equal(target.hostname,'localhost');assert.equal(target.pathname,'/feedback_test');assert.ok(target.searchParams.get('host')?.startsWith('/tmp/idps-feedback-check.'));
+  process.env.DATABASE_URL=process.env.DIRECT_URL=target.href;
+  process.env.JWT_SECRET=randomBytes(48).toString('hex');
+  const {default:db}=await import('../prisma/client');
+  const {default:user}=await import('../routes/user');
+  const {default:master}=await import('../routes/student');
+  const {generateToken}=await import('../middleware/jwt');
+  const app=express();app.use(express.json());app.use(user);app.use('/student',master);
+  const server=app.listen(0,'127.0.0.1');await once(server,'listening');
+  const addr=server.address();assert.ok(addr&&typeof addr==='object');
+  const tag=randomUUID();
+  try {
+    const t=await db.user.create({data:{name:'Teacher',email:tag+'t@example.invalid',role:'TEACHER',gender:'FEMALE',teacher:{create:{name:'Teacher',gender:'FEMALE',phone:'test'}}},include:{teacher:true}});
+    const p=await db.user.create({data:{name:'Guardian',email:tag+'p@example.invalid',role:'PARENT',gender:'MALE',parent:{create:{name:'Guardian',phone1:'1111111111',adharnumber:'000000000000'}}},include:{parent:true}});
+    const parentId=p.parent!.id,teacherId=t.teacher!.id;
+    const a=await db.class.create({data:{name:tag,section:'A',teacherId}});
+    const b=await db.class.create({data:{name:tag,section:'B',teachers:{create:{teacherId}}}});
+    const other=await db.class.create({data:{name:tag,section:'Other'}});
+    const student=await db.student.create({data:{name:'Pupil',gender:'MALE',classId:a.id,adharnumber:'000000000000',parents:{create:{parentId}}}});
+    const outsider=await db.student.create({data:{name:'Other',gender:'FEMALE',classId:other.id}});
+    const token=generateToken(t.id,'TEACHER');
+    const call=(path:string,body?:unknown)=>fetch('http://127.0.0.1:'+addr.port+path,{method:body?'PUT':'GET',headers:{Authorization:'Bearer '+token,'Content-Type':'application/json'},body:body?JSON.stringify(body):undefined});
+    const update=(body:unknown)=>call('/update-student/'+student.id,body);
+    const read=()=>call('/student/get-student-details-master/'+student.id);
+    assert.equal((await call('/update-student/'+outsider.id,{name:'No'})).status,403);
+    assert.equal((await update({classId:other.id})).status,403);
+    assert.equal((await update({adharnumber:null})).status,403);
+    const data={name:'Revised',gender:'FEMALE',dob:'2018-08-30',classId:b.id,admissiondate:'2024-07-01',admissionno:'F-1',address:'Sample address',pincode:'534350',bloodgroup:'AB_NEG',mothertongue:'URGU',socialcategory:'MBC_DNC',height:122.5,weight:28,busId:null,photo:null,guardians:[{id:parentId,name:'Updated guardian',phone1:'2222222222',phone2:'3333333333'}],expectedUpdatedAt:student.updatedAt.toISOString()};
+    const saved=await update(data);assert.equal(saved.status,200);const r=(await saved.json()).data;assert.equal(r.parents[0].parent.adharnumber,undefined);assert.equal(r.adharnumber,undefined);
+    const loaded=await read();assert.equal(loaded.status,200);const after=(await loaded.json()).data;
+    for(const key of ['name','gender','classId','admissionno','address','pincode','bloodgroup','mothertongue','socialcategory','height','weight'] as const) assert.equal(after[key],data[key]);
+    assert.ok(after.admissiondate.startsWith(data.admissiondate));assert.ok(after.dob.startsWith(data.dob));assert.equal(after.parents[0].parent.name,'Updated guardian');assert.equal(after.parents[0].parent.phone2,'3333333333');assert.deepEqual(after.feeDetails,[]);assert.equal(after.adharnumber,undefined);
+    assert.equal((await update({...data,name:'Stale'})).status,409);
+    assert.equal((await update({dob:'2024-02-30'})).status,400);
+    assert.equal((await update({bloodgroup:'UNKNOWN'})).status,400);
+    assert.equal((await update({height:null,address:null,bloodgroup:null,guardians:[{id:parentId,phone2:null}]})).status,200);
+    const cleared=(await (await read()).json()).data;assert.equal(cleared.height,null);assert.equal(cleared.address,null);assert.equal(cleared.bloodgroup,null);assert.equal(cleared.parents[0].parent.phone2,null);assert.equal(cleared.weight,28);
+    await db.parentStudent.create({data:{studentId:outsider.id,parentId}});
+    assert.equal((await update({name:'Must roll back',guardians:[{id:parentId,name:'No'}]})).status,403);
+    assert.equal((await db.student.findUniqueOrThrow({where:{id:student.id}})).name,'Revised');
+    assert.equal((await call('/update-parent/'+parentId,{phone1:'3333333333'})).status,403);
+    await db.classTeacher.delete({where:{classId_teacherId:{classId:b.id,teacherId}}});
+    assert.equal((await read()).status,403);assert.equal((await update({address:'No'})).status,403);
+  } finally {server.close();await db.$disconnect()}
+});

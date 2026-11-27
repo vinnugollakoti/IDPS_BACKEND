@@ -44,6 +44,7 @@ model ParentStudent {
 }
 
 model Student {
+  teacherNotes StudentFeedback[]
   reportCards ReportCard[]
   id             Int             @id @default(autoincrement())
   photo          String?
@@ -58,8 +59,8 @@ model Student {
   socialcategory SocialCategory?
   bloodgroup     BloodGroup?
   admissiondate  DateTime?
-  height         Int?
-  weight         Int?
+  height         Float?
+  weight         Float?
   address        String?
   classId        Int
   class          Class           @relation(fields: [classId], references: [id])
@@ -188,6 +189,7 @@ model OtpRateLimit {
 }
 
 model User {
+  studentFeedback StudentFeedback[]
   otpRateLimits OtpRateLimit[]
   id        Int       @id @default(autoincrement())
   name      String
@@ -582,6 +584,19 @@ model ExpenseReserve {
 
   @@index([transactionDate])
   @@index([createdById])
+}
+
+model StudentFeedback {
+  id         Int      @id @default(autoincrement())
+  studentId  Int
+  student    Student  @relation(fields: [studentId], references: [id], onDelete: Cascade)
+  authorId   Int?
+  author     User?    @relation(fields: [authorId], references: [id], onDelete: SetNull)
+  authorName String
+  message    String   @db.VarChar(2000)
+  createdAt  DateTime @default(now())
+
+  @@index([studentId, id])
 }
 
 model Feedback {
