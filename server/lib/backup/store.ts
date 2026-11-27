@@ -3,15 +3,18 @@ import { chmodSync, readFileSync, realpathSync, mkdirSync, unlinkSync, statfsSyn
 import path from "node:path";
 
 export type Backup = { id:string; target:"server"|"local"; status:string; requestedBy:number; startedAt:string; finishedAt:string|null; bytes:number; checksum:string|null; error:string|null };
+export class BackupStorageError extends Error {}
 let state: {db:DatabaseSync; dir:string} | undefined;
 export function store() {
   if (state) return state;
   const mount = process.env.BACKUP_MOUNT;
-  if (!mount || !path.isAbsolute(mount) || realpathSync(mount) === "/") throw new Error("Configure a dedicated backup disk.");
+  if (!mount || !path.isAbsolute(mount)) throw new BackupStorageError("Set BACKUP_MOUNT to the absolute backup mount point in the backend environment.");
+
   const root = realpathSync(mount);
-  if (process.platform === "linux" && !readFileSync("/proc/self/mountinfo","utf8").split("\n").some(line=>line.split(" ")[4] === root))
-    throw new Error("The configured backup disk is not mounted.");
-  if (process.platform !== "linux" && process.env.NODE_ENV === "production") throw new Error("Production backups require a verified Linux mount.");
+  if (root === "/") throw new BackupStorageError("Use a dedicated mount point for BACKUP_MOUNT.");
+  if (process.platform === "linux" && !readFileSync("/proc/self/mountinfo","utf8").split("\n").some(line=>line.split(" ")[4]?.replace(/\\([0-7]{3})/g, (_, octal) => String.fromCharCode(parseInt(octal, 8))) === root))
+    throw new BackupStorageError("The directory configured in BACKUP_MOUNT is not mounted. Check it with mountpoint on the backend host.");
+  if (process.platform !== "linux" && process.env.NODE_ENV === "production") throw new BackupStorageError("Production backups require a verified Linux mount.");
   const dir = path.join(root,"idps-backups");
   mkdirSync(dir,{recursive:true,mode:0o700});
   const sqlite:typeof import("node:sqlite") = require("node:sqlite");

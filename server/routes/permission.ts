@@ -2,6 +2,7 @@ import { Router, Response } from "express";
 import prisma from "../prisma/client";
 import { auth, AuthRequest, isExecutiveRole } from "../middleware/auth";
 import { serverCache } from "../utils/cache";
+import { allowedModulesForRole } from "../lib/modulePermissions";
 
 const router = Router();
 
@@ -87,46 +88,7 @@ router.get("/staff", auth, async (req: AuthRequest, res: Response) => {
         badge = "Faculty Staff";
       }
 
-      // Default module access per role if no custom permissions recorded yet
-      let allowedModules: string[] = [];
-
-      if (user.userPermissions && user.userPermissions.length > 0) {
-        allowedModules = user.userPermissions
-          .filter((p) => p.isAllowed)
-          .map((p) => p.module);
-      } else {
-        // Fallback default permissions by role
-        if (user.role === "PRINCIPAL" || user.role === "DIRECTOR" || user.role === "CHAIRMAN") {
-          allowedModules = [
-            "students",
-            "circulars",
-            "exams",
-            "classes",
-            "attendance",
-            "timetable",
-            "notifications",
-            "permission",
-            "homework",
-            "whatsapp",
-            "spending",
-            "complaints",
-            "downloads",
-            "profile",
-          ];
-        } else if (user.role === "RECEPTIONIST") {
-          allowedModules = ["students", "attendance", "spending", "downloads"];
-        } else if (user.role === "TEACHER") {
-          allowedModules = [
-            "students",
-            "fees",
-            "circulars",
-            "exams",
-            "classes",
-            "attendance",
-            "timetable",
-          ];
-        }
-      }
+      const allowedModules = allowedModulesForRole(user.role, user.userPermissions || []);
 
       return {
         id: user.id,

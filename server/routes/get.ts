@@ -1,5 +1,6 @@
 import express, {Request, Response} from "express";
 import prisma from "../prisma/client";
+import type { Prisma } from "../generated/prisma/client";
 import { AuthRequest, auth, isExecutiveRole, isStaffRole } from "../middleware/auth";
 import { serverCache } from "../utils/cache";
 import { listPage, pageQuery, pageFilter, listRows } from "../utils/listPage";
@@ -10,6 +11,21 @@ const resolveAuthUserId = (user: any) => {
     return Number.isFinite(value) && value > 0 ? value : null;
 };
 
+
+// Use relation filters in the data query itself: no cached or previously resolved IDs.
+function rosterScope(role: string, userId: number | null): { classes: Prisma.ClassWhereInput; students: Prisma.StudentWhereInput } {
+    if (role === "TEACHER") {
+        if (!userId) return { classes: { id: { in: [] } }, students: { id: { in: [] } } };
+        const classes = { OR: [{ teacher: { userId } }, { teachers: { some: { teacher: { userId } } } }] };
+        return { classes, students: { class: classes } };
+    }
+    if (role === "PARENT") {
+        if (!userId) return { classes: { id: { in: [] } }, students: { id: { in: [] } } };
+        const students = { parents: { some: { parent: { userId } } } };
+        return { classes: { students: { some: students } }, students };
+    }
+    return { classes: {}, students: {} };
+}
 
 router.get("/get-exams", auth, listPage("name", ["name", "examDate"]), async(req: AuthRequest, res: Response) => {
     try {
@@ -64,7 +80,8 @@ router.get("/get-exams", auth, listPage("name", ["name", "examDate"]), async(req
                 subject: true,
                 class: true,
                 marks: {
-                    where: req.user.role === "PARENT" ? { studentId: { in: parentStudentIds || [] }, exam: { isReleased: true } } : undefined,
+                    where: req.user.role === "PARENT" ? { studentId: { in: parentStudentIds || [] }, exam: { isReleased: true } }
+                        : req.user.role === "TEACHER" ? { student: { classId: { in: classIds || [] } } } : undefined,
                     include: {
                         student: {
                             select: {
@@ -97,42 +114,10 @@ router.get("/get-classes", auth, listPage("name", ["name", "section"]), async(re
 
         const authUserId = resolveAuthUserId(req.user);
 
-        let where: { OR?: Array<{ teacherId?: number; teachers?: { some: { teacherId: number } } }>; id?: { in: number[] } } = {};
-        if (req.user.role === "TEACHER") {
-            const teacher = await prisma.teacher.findUnique({
-                where: { userId: authUserId ?? -1 },
-                select: { id: true }
-            });
-            if (!teacher) return res.json({message: "Fetched classess successfully", ...listRows([], res.locals.page)});
-            where = {
-                OR: [
-                    { teacherId: teacher.id },
-                    { teachers: { some: { teacherId: teacher.id } } }
-                ]
-            };
-        } else if (req.user.role === "PARENT") {
-            if (!authUserId) return res.json({message: "Fetched classess successfully", ...listRows([], res.locals.page)});
-            const parent = await prisma.parent.findFirst({
-                where: { userId: authUserId },
-                select: { id: true }
-            });
-            if (!parent) return res.json({message: "Fetched classess successfully", ...listRows([], res.locals.page)});
-            const parentStudents = await prisma.parentStudent.findMany({
-                where: { parentId: parent.id },
-                select: { studentId: true }
-            });
-            const studentIds = parentStudents.map((p) => p.studentId);
-            if (studentIds.length === 0) return res.json({message: "Fetched classess successfully", ...listRows([], res.locals.page)});
-            const parentClasses = await prisma.student.findMany({
-                where: { id: { in: studentIds } },
-                select: { classId: true }
-            });
-            const classIds = Array.from(new Set(parentClasses.map((c) => c.classId)));
-            where = { id: { in: classIds } };
-        }
-
+        const { classes: where, students: visibleStudents } = rosterScope(req.user.role, authUserId);
         const cacheKey = `get-classes:${req.user.role}:${authUserId}`;
-        const cached = !res.locals.page && serverCache.get(cacheKey);
+        const cacheable = !res.locals.page && req.user.role !== "TEACHER" && req.user.role !== "PARENT";
+        const cached = cacheable && serverCache.get(cacheKey);
         if (cached) {
             return res.json({message: "Fetched classess successfully", data: cached});
         }
@@ -180,7 +165,7 @@ router.get("/get-classes", auth, listPage("name", ["name", "section"]), async(re
                         date: "desc"
                     },
                     include: {
-                        attendances: true,
+                        attendances: { where: { student: visibleStudents } },
                         takenBy: {
                             select: {
                                 id: true,
@@ -193,7 +178,7 @@ router.get("/get-classes", auth, listPage("name", ["name", "section"]), async(re
             ...pageQuery(res.locals.page)
         })
 
-        if (!res.locals.page) serverCache.set(cacheKey, classes, 30);
+        if (cacheable) serverCache.set(cacheKey, classes, 30);
         res.json({message: "Fetched classess successfully", ...listRows(classes, res.locals.page)})
     } catch(err) {
         console.log(err)
@@ -284,7 +269,7 @@ router.get("/get-marks", auth, listPage("examId", ["examId", "marks", "studentId
 
         let where: {
             exam?: { classId?: { in: number[] }; isReleased?: boolean };
-            student?: { parents?: { some?: { parentId?: number } } };
+            student?: { classId?: { in: number[] }; parents?: { some?: { parentId?: number } } };
         } = {};
 
         if (req.user.role === "TEACHER") {
@@ -298,7 +283,7 @@ router.get("/get-marks", auth, listPage("examId", ["examId", "marks", "studentId
                 select: { id: true }
             });
             const classIds = teacherClasses.map((c) => c.id);
-            where = { exam: { classId: { in: classIds } } };
+            where = { exam: { classId: { in: classIds } }, student: { classId: { in: classIds } } };
         } else if (req.user.role === "PARENT") {
             if (!authUserId) return res.json({message: "Fetched marks successfully", ...listRows([], res.locals.page)});
             const parent = await prisma.parent.findFirst({
@@ -347,7 +332,7 @@ router.get("/get-subjects", auth, listPage("name", ["name"]), async (req: AuthRe
             });
             if (!teacher) return res.json({message: "Fetched subjects successfully", ...listRows([], res.locals.page)});
             const teacherClasses = await prisma.class.findMany({
-                where: { teacherId: teacher.id },
+                where: { OR: [{ teacherId: teacher.id }, { teachers: { some: { teacherId: teacher.id } } }] },
                 select: { id: true }
             });
             classIds = teacherClasses.map((c) => c.id);
@@ -375,6 +360,7 @@ router.get("/get-subjects", auth, listPage("name", ["name"]), async (req: AuthRe
             where: { AND: [classIds ? { classsubject: { some: { classId: { in: classIds } } } } : {}, pageFilter(res.locals.page)] },
             include: {
                 exams: {
+                    where: classIds ? { classId: { in: classIds }, ...(req.user.role === "PARENT" ? { isReleased: true } : {}) } : undefined,
                     select: {
                         id: true,
                         name: true,
@@ -484,52 +470,10 @@ router.get("/get-students", auth, listPage("name", ["name", "studentCode"]), asy
 
         const authUserId = resolveAuthUserId(req.user);
 
-        let where: { classId?: { in: number[] }; id?: { in: number[] } } = {};
-        // For TEACHER, track classIds in the cache key to prevent stale
-        // empty-cache (from when teacher had no class) being served after assignment.
-        let teacherClassIds: number[] = [];
-
-        if (req.user.role === "TEACHER") {
-            const teacher = await prisma.teacher.findUnique({
-                where: { userId: authUserId ?? -1 },
-                select: { id: true }
-            });
-            if (!teacher) return res.json({ message: "Fetched students successfully", ...listRows([], res.locals.page) });
-
-            const teacherClasses = await prisma.class.findMany({
-                where: {
-                    OR: [
-                        { teacherId: teacher.id },
-                        { teachers: { some: { teacherId: teacher.id } } }
-                    ]
-                },
-                select: { id: true }
-            });
-            teacherClassIds = teacherClasses.map((c) => c.id).sort((a, b) => a - b);
-            if (teacherClassIds.length === 0) return res.json({ message: "Fetched students successfully", ...listRows([], res.locals.page) });
-            where = { classId: { in: teacherClassIds } };
-        } else if (req.user.role === "PARENT") {
-            if (!authUserId) return res.json({ message: "Fetched students successfully", ...listRows([], res.locals.page) });
-            const parent = await prisma.parent.findFirst({
-                where: { userId: authUserId },
-                select: { id: true }
-            });
-            if (!parent) return res.json({ message: "Fetched students successfully", ...listRows([], res.locals.page) });
-            const parentStudents = await prisma.parentStudent.findMany({
-                where: { parentId: parent.id },
-                select: { studentId: true }
-            });
-            const studentIds = parentStudents.map((p) => p.studentId);
-            if (studentIds.length === 0) return res.json({ message: "Fetched students successfully", ...listRows([], res.locals.page) });
-            where = { id: { in: studentIds } };
-        }
-
-        // Include classIds in the cache key for TEACHER so that a change in
-        // class assignment always results in a fresh fetch.
-        const studentCacheKey = req.user.role === "TEACHER"
-            ? `get-students:TEACHER:${authUserId}:${teacherClassIds.join(",")}`
-            : `get-students:${req.user.role}:${authUserId}`;
-        const cachedStudents = !res.locals.page && serverCache.get(studentCacheKey);
+        const { students: where } = rosterScope(req.user.role, authUserId);
+        const studentCacheKey = `get-students:${req.user.role}:${authUserId}`;
+        const cacheable = !res.locals.page && req.user.role !== "TEACHER" && req.user.role !== "PARENT";
+        const cachedStudents = cacheable && serverCache.get(studentCacheKey);
         if (cachedStudents) {
             return res.json({ message: "Fetched students successfully", data: cachedStudents });
         }
@@ -585,7 +529,7 @@ router.get("/get-students", auth, listPage("name", ["name", "studentCode"]), asy
                 };
             })
             : students;
-        if (!res.locals.page) serverCache.set(studentCacheKey, safeStudents, 30);
+        if (cacheable) serverCache.set(studentCacheKey, safeStudents, 30);
         return res.json({ message: "Fetched students successfully", ...listRows(safeStudents, res.locals.page) });
     } catch (err) {
         console.log(err);

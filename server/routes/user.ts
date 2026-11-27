@@ -1,3 +1,5 @@
+import { updateStudentProfile } from "../lib/studentProfileUpdate";
+import { allowedModulesForRole } from "../lib/modulePermissions";
 import express, {Request, Response} from "express";
 import prisma from "../prisma/client";
 import { AuthRequest, auth, isExecutiveRole } from "../middleware/auth";
@@ -358,9 +360,7 @@ router.get("/me", auth, async (req: AuthRequest, res: Response) => {
    }
 
    const phone = user.teacher?.phone || user.parent?.phone1 || user.phone || undefined;
-   const allowedModules = user.userPermissions.length
-      ? user.userPermissions.filter((item) => item.isAllowed).map((item) => item.module)
-      : undefined;
+   const allowedModules = allowedModulesForRole(user.role, user.userPermissions);
    const profile = { ...user, phone, photoUrl: user.photoUrl || user.teacher?.photo || undefined, allowedModules };
    res.json({ message: "User profile fetched", data: profile, user: profile });
 });
@@ -450,7 +450,7 @@ router.post("/me/photo", auth, async (req: AuthRequest, res: Response) => {
 
 router.put("/update-parent/:id", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (!isExecutiveRole(req.user.role) && req.user.role !== "TEACHER" && req.user.role !== "RECEPTIONIST") {
+        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
             return res.status(403).json({message: "UnAuthorized request"})
         }
 
@@ -496,72 +496,7 @@ router.put("/update-parent/:id", auth, async(req: AuthRequest, res: Response) =>
 })
 
 
-router.put("/update-student/:id", auth, async (req: AuthRequest, res: Response) => {
-    try {
-        if (!isExecutiveRole(req.user.role) && req.user.role !== "TEACHER" && req.user.role !== "RECEPTIONIST") {
-            return res.status(403).json({message: "UnAuthorized request"})
-        }
-
-        const { photo, name, gender, dob, classId, busId, admissionno, adharnumber, mothertongue, socialcategory, bloodgroup, address, pincode, height, weight } = req.body;
-        const studentId = Number(req.params.id);
-        if (!Number.isSafeInteger(studentId) || studentId < 1) return res.status(400).json({ message: "Invalid student id" });
-        if (busId !== undefined && busId !== null && busId !== "") {
-            const parsedBusId = Number(busId);
-            if (!Number.isSafeInteger(parsedBusId) || parsedBusId < 1 || !await prisma.bus.findUnique({ where: { id: parsedBusId }, select: { id: true } })) {
-                return res.status(400).json({ message: "Selected bus does not exist" });
-            }
-        }
-
-        let parsedDob: Date | null | undefined = undefined;
-        if (dob !== undefined) {
-            if (dob === null || (typeof dob === "string" && dob.trim() === "")) {
-                parsedDob = null;
-            } else {
-                const d = new Date(dob);
-                if (isNaN(d.getTime())) {
-                    return res.status(400).json({ message: "Invalid date format for dob" });
-                }
-                parsedDob = d;
-            }
-        }
-
-        const student = await prisma.student.update({
-            where: {id: studentId},
-            data: {
-                photo,
-                name: typeof name === "string" ? name.trim() : name,
-                gender,
-                dob: parsedDob,
-                classId: classId !== undefined ? (classId ? Number(classId) : undefined) : undefined,
-                busId: busId !== undefined ? (busId ? Number(busId) : null) : undefined,
-                admissionno: admissionno !== undefined ? String(admissionno || "TEMP").trim() : undefined,
-                adharnumber: adharnumber !== undefined ? (adharnumber ? String(adharnumber).replace(/\D/g, '').slice(0, 12) : null) : undefined,
-                mothertongue: mothertongue !== undefined ? mapMotherTongue(mothertongue) : undefined,
-                socialcategory: socialcategory !== undefined ? mapSocialCategory(socialcategory) : undefined,
-                bloodgroup: bloodgroup !== undefined ? mapBloodGroup(bloodgroup) : undefined,
-                address: address !== undefined ? (address ? String(address).trim() : null) : undefined,
-                pincode: pincode !== undefined ? (pincode ? String(pincode).trim() : null) : undefined,
-                height: height !== undefined ? (height === null || height === '' ? null : Number(height)) : undefined,
-                weight: weight !== undefined ? (weight === null || weight === '' ? null : Number(weight)) : undefined
-            },
-
-            include: {
-                parents: {include: {parent: true}},
-                class: true,
-                bus: true
-            }
-        })
-
-        void serverCache.clear();
-
-        res.json({message: "Student details updated successfully", data: student});
-
-    } catch (err) {
-        console.log(err)
-        return res.status(400).json({message: "Error in updating student details, Contact developer"});
-    }
-})
-
+router.put("/update-student/:id", auth, updateStudentProfile);
 
 router.put("/assign-teacher-classes/:id", auth, async (req: AuthRequest, res: Response) => {
     if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {

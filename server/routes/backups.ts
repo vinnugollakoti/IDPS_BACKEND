@@ -2,7 +2,7 @@ import express, { Request, Response } from "express";
 import { randomBytes, createHash } from "node:crypto";
 import { auth, AuthRequest, isExecutiveRole } from "../middleware/auth";
 import prisma from "../prisma/client";
-import {archive,freeBytes,history,removeFile,store} from "../lib/backup/store";
+import {archive,BackupStorageError,freeBytes,history,removeFile,store} from "../lib/backup/store";
 import {start} from "../lib/backup/run";
 
 const router=express.Router();
@@ -94,5 +94,19 @@ router.post("/:id/ticket",(req:AuthRequest,res)=>{
   tickets.set(digest(token),{job:job.id,actor:Number(req.user.userId),expires:Date.now()+60000});
   return res.json({ticket:token});
 });
-router.use((_err:unknown,_req:Request,res:Response,_next:express.NextFunction)=>res.status(503).json({message:"Backup service unavailable. Check the private disk and database configuration."}));
+router.use((err: unknown, req: Request, res: Response, next: express.NextFunction) => {
+  if (res.headersSent) return next(err);
+  const failure = err as {code?: string; errcode?: number};
+  // Log only operational codes. Prisma errors can contain connection details.
+  const code = failure?.code;
+  let message = "Could not read the backup history. Check the school-backend logs.";
+  if (err instanceof BackupStorageError) message = err.message;
+  else if (code === "ENOENT" || code === "ENOTDIR") message = "A backup path is missing. Check that BACKUP_MOUNT exists on the backend host.";
+  else if (["EACCES", "EPERM", "EROFS"].includes(code || "") || [8, 14].includes((failure?.errcode ?? 0) & 255)) message = "The backend service user cannot open the backup catalog for writing. Check disk ownership, permissions and mount mode.";
+  else if (code === "ENOSPC" || ((failure?.errcode ?? 0) & 255) === 13) message = "The backup disk is full. Check available space on the host.";
+  else if (code === "ERR_UNKNOWN_BUILTIN_MODULE") message = "The backend runtime lacks node:sqlite. Run school-backend with Node 24 and restart PM2.";
+  else if (/^P[0-9]{4}$/.test(code || "")) message = "The backup service could not verify account access in the school database.";
+  console.error("Backup service unavailable", {method: req.method, code, sqliteCode: failure?.errcode, message});
+  return res.status(503).json({message});
+});
 export default router;

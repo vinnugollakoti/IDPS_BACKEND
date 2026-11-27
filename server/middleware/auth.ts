@@ -1,5 +1,6 @@
 import { Request, Response, NextFunction } from "express";
 import { verifyToken } from "./jwt";
+import prisma from "../prisma/client";
 
 export interface AuthRequest extends Request<any, any, any, any> {
   headers: any;
@@ -7,7 +8,7 @@ export interface AuthRequest extends Request<any, any, any, any> {
   user?: any;
 }
 
-export function auth(req: AuthRequest, res: Response, next: NextFunction) {
+export async function auth(req: AuthRequest, res: Response, next: NextFunction) {
   const header = req.headers.authorization;
 
   if (!header) {
@@ -24,8 +25,17 @@ export function auth(req: AuthRequest, res: Response, next: NextFunction) {
     if (!decoded || typeof decoded !== "object" || !Number.isInteger(Number(decoded.userId)) || !decoded.role || decoded.tokenVersion !== 1) {
       return res.status(401).json({ message: "Invalid token payload" });
     }
-    req.user = decoded;
-    next();
+    let account;
+    try {
+      account = await prisma.user.findUnique({ where: { id: Number(decoded.userId) }, select: { role: true } });
+    } catch {
+      return res.status(503).json({ message: "Unable to verify account access" });
+    }
+    if (!account || account.role !== decoded.role) {
+      return res.status(401).json({ message: "Account access changed. Please sign in again." });
+    }
+    req.user = { ...decoded, role: account.role };
+    return next();
   } catch {
     return res.status(401).json({ message: "Invalid token" });
   }
