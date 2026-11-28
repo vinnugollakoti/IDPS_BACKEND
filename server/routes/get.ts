@@ -1,22 +1,20 @@
 import express, {Request, Response} from "express";
 import prisma from "../prisma/client";
+import { resolveAuthUserId } from "../lib/authIdentity";
+import { assignedClasses, assignedTeacherClassIds } from "../lib/teacherClassScope";
 import type { Prisma } from "../generated/prisma/client";
 import { AuthRequest, auth, isExecutiveRole, isStaffRole } from "../middleware/auth";
 import { serverCache } from "../utils/cache";
 import { listPage, pageQuery, pageFilter, listRows } from "../utils/listPage";
 const router = express.Router();
 
-const resolveAuthUserId = (user: any) => {
-    const value = Number(user?.userId ?? user?.id);
-    return Number.isFinite(value) && value > 0 ? value : null;
-};
 
 
 // Use relation filters in the data query itself: no cached or previously resolved IDs.
 function rosterScope(role: string, userId: number | null): { classes: Prisma.ClassWhereInput; students: Prisma.StudentWhereInput } {
     if (role === "TEACHER") {
         if (!userId) return { classes: { id: { in: [] } }, students: { id: { in: [] } } };
-        const classes = { OR: [{ teacher: { userId } }, { teachers: { some: { teacher: { userId } } } }] };
+        const classes = assignedClasses(userId);
         return { classes, students: { class: classes } };
     }
     if (role === "PARENT") {
@@ -38,21 +36,8 @@ router.get("/get-exams", auth, listPage("name", ["name", "examDate"]), async(req
         let classIds: number[] | null = null;
         let parentStudentIds: number[] | null = null;
         if (req.user.role === "TEACHER") {
-            const teacher = await prisma.teacher.findUnique({
-                where: { userId: authUserId ?? -1 },
-                select: { id: true }
-            });
-            if (!teacher) return res.json({message: "Fetched Exams", ...listRows([], res.locals.page)});
-            const teacherClasses = await prisma.class.findMany({
-                where: {
-                    OR: [
-                        { teacherId: teacher.id },
-                        { teachers: { some: { teacherId: teacher.id } } }
-                    ]
-                },
-                select: { id: true }
-            });
-            classIds = teacherClasses.map((c) => c.id);
+            classIds = await assignedTeacherClassIds(authUserId ?? -1);
+            if (!classIds.length) return res.json({message: "Fetched Exams", ...listRows([], res.locals.page)});
         } else if (req.user.role === "PARENT") {
             if (!authUserId) return res.json({message: "Fetched Exams", ...listRows([], res.locals.page)});
             const parent = await prisma.parent.findFirst({
@@ -195,7 +180,7 @@ router.get("/get-teachers", auth, listPage("name", ["name"]), async(req: AuthReq
         const teachers = await prisma.teacher.findMany({
             where: pageFilter(res.locals.page),
             include: {
-                user: { select: { id: true, name: true, email: true, gender: true } },
+                user: { select: { id: true, name: true, email: true, gender: true, honorific: true } },
                 classes: { select: { id: true, name: true, section: true } },
                 assignedClasses: { select: { class: { select: { id: true, name: true, section: true } } } },
                 _count: { select: { assignedClasses: true, timetable: true } }

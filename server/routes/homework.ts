@@ -3,13 +3,15 @@ import prisma from "../prisma/client";
 import { AuthRequest, auth, isExecutiveRole } from "../middleware/auth";
 import { uploadHomeworkFile } from "../lib/supabaseStorage";
 import { logAudit } from "../utils/audit";
+import { assignedClasses, assignedClassesByTeacherId } from "../lib/teacherClassScope";
+import { resolveAuthUserId } from "../lib/authIdentity";
 
 const router = express.Router();
 const resolveUserId = (user: any) => Number(user?.userId ?? user?.id) || null;
 const canManage = (role: string) => isExecutiveRole(role) || role === "TEACHER";
 const teacherForUser = async (userId: number | null) => userId ? prisma.teacher.findUnique({ where: { userId }, select: { id: true } }) : null;
 const classScope = (user: any) => user.role === "TEACHER"
-  ? { OR: [{teacher:{userId: Number(user.userId ?? user.id)}},{teachers:{some:{teacher:{userId:Number(user.userId ?? user.id)}}}}] } : {};
+  ? assignedClasses(resolveAuthUserId(user) ?? -1) : {};
 const serialize = (item: any) => {
   const isArchived = item.dueDate
     ? new Date(new Date(item.dueDate).setHours(23, 59, 59, 999)).getTime() < Date.now()
@@ -50,12 +52,7 @@ router.get("/", async (req: AuthRequest, res: Response) => {
       }
       // Find all classes the teacher is assigned to (primary or via junction table)
       const teacherClasses = await prisma.class.findMany({
-        where: {
-          OR: [
-            { teacherId: teacher.id },
-            { teachers: { some: { teacherId: teacher.id } } },
-          ],
-        },
+        where: assignedClassesByTeacherId(teacher.id),
         select: { id: true },
       });
       const assignedClassIds = teacherClasses.map((c) => c.id);
@@ -96,8 +93,15 @@ router.post("/", async (req: AuthRequest, res: Response) => {
     if (!assigned) return res.status(403).json({message:"Class unavailable"});
     const teacherId = teacher?.id ?? assigned.teacherId ?? assigned.teachers[0]?.teacherId;
     if (!teacherId) return res.status(409).json({message:"Assign a teacher to this class before creating homework"});
+    const files = Array.isArray(attachments) ? attachments : [];
     const uploaded = [];
-    for (const [index, file] of (Array.isArray(attachments) ? attachments : []).entries()) uploaded.push(await uploadHomeworkFile({ imageBase64: file.base64, imageMimeType: file.mimeType, path: `homework/${teacherId}_${Date.now()}_${index}` }));
+    const uploadBatchId = Date.now();
+    for (let start = 0; start < files.length; start += 3) {
+      const batch = await Promise.all(files.slice(start, start + 3).map((file, offset) =>
+        uploadHomeworkFile({ imageBase64: file.base64, imageMimeType: file.mimeType, path: `homework/${teacherId}_${uploadBatchId}_${start + offset}` })
+      ));
+      uploaded.push(...batch);
+    }
     const result = await prisma.homework.create({ data: { classId: Number(classId), teacherId, subject: subject.trim(), description: description.trim(), dueDate: new Date(dueDate), attachments: uploaded } });
     void logAudit({ req, action: "CREATE_HOMEWORK", tag: "NOTICE" as any, details: `Assigned ${subject.trim()} homework to class ${classId}`, entityType: "Homework", entityId: result.id });
     return res.status(201).json({ message: "Homework assigned successfully", data: serialize(result) });
@@ -115,10 +119,7 @@ router.put("/:id", async (req: AuthRequest, res: Response) => {
       const isAssigned = await prisma.class.findFirst({
         where: {
           id: existing.classId,
-          OR: [
-            { teacherId: teacher.id },
-            { teachers: { some: { teacherId: teacher.id } } },
-          ],
+          ...assignedClassesByTeacherId(teacher.id),
         },
       });
       if (!isAssigned) {
@@ -143,10 +144,7 @@ router.delete("/:id", async (req: AuthRequest, res: Response) => {
       const isAssigned = await prisma.class.findFirst({
         where: {
           id: existing.classId,
-          OR: [
-            { teacherId: teacher.id },
-            { teachers: { some: { teacherId: teacher.id } } },
-          ],
+          ...assignedClassesByTeacherId(teacher.id),
         },
       });
       if (!isAssigned) {

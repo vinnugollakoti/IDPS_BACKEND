@@ -1,16 +1,13 @@
-import { assignedClasses } from "../lib/studentProfileUpdate";
+import { assignedClasses } from "../lib/teacherClassScope";
 import express, {Request, Response} from "express";
 import prisma from "../prisma/client";
+import { resolveAuthUserId } from "../lib/authIdentity";
 import { AuthRequest, auth, isExecutiveRole } from "../middleware/auth";
 import { logAudit } from "../utils/audit";
 import { serverCache } from "../utils/cache";
 import { matchStudentRecord } from "../utils/studentMatcher";
 const router = express.Router();
 
-const resolveAuthUserId = (user: any) => {
-    const value = Number(user?.userId ?? user?.id);
-    return Number.isFinite(value) && value > 0 ? value : null;
-};
 
 type ImportParentInput = {
     name?: string | null;
@@ -660,140 +657,44 @@ const importStudentRow = async (
 };
 
 
-router.post("/bulk-import-students", auth, async (req: AuthRequest, res: Response) => {
-    try {
-        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
-            return res.status(403).json({ message: "Unauthorized request" });
-        }
-
-        const classId = Number(req.body.classId);
-        const rows = Array.isArray(req.body.rows) ? (req.body.rows as ImportStudentInput[]) : [];
-
-        if (!Number.isFinite(classId) || classId <= 0) {
-            return res.status(400).json({ message: "Valid classId is required" });
-        }
-
-        if (!rows.length) {
-            return res.status(400).json({ message: "No rows received for import" });
-        }
-
-        const classExists = await prisma.class.findUnique({
-            where: { id: classId },
-            select: { id: true, name: true, section: true },
-        });
-
-        if (!classExists) {
-            return res.status(404).json({ message: "Class not found for the provided classId" });
-        }
-
-        const normalizedRows = rows.map((row, index) => normalizeImportRow(row, classId, Number(row.rowNumber ?? index + 1)));
-        const summary: ImportBatchResult = {
-            createdStudents: 0,
-            createdParents: 0,
-            createdMothers: 0,
-            createdFathers: 0,
-            linkedParents: 0,
-            linkedRelations: 0,
-            reusedParents: 0,
-            skippedRows: 0,
-            failedRows: [],
-            createdStudentIds: [],
-        };
-        const stepTrace: ImportStepTrace[] = [];
-
-        for (const row of normalizedRows) {
-            const rowResult = await importStudentRow(row, classId);
-            summary.createdStudents += rowResult.createdStudents;
-            summary.createdParents += rowResult.createdParents;
-            summary.createdMothers += rowResult.createdMothers;
-            summary.createdFathers += rowResult.createdFathers;
-            summary.linkedParents += rowResult.linkedParents;
-            summary.linkedRelations += rowResult.linkedRelations;
-            summary.reusedParents += rowResult.reusedParents;
-            summary.skippedRows += rowResult.skippedRows;
-            summary.failedRows.push(...rowResult.failedRows);
-            summary.createdStudentIds.push(...rowResult.createdStudentIds);
-
-            for (const failedRow of rowResult.failedRows) {
-                stepTrace.push({
-                    rowNumber: failedRow.rowNumber,
-                    admissionno: failedRow.admissionno ?? null,
-                    name: failedRow.name ?? null,
-                    step: (failedRow.step as ImportStepTrace["step"]) ?? "transaction",
-                    message: failedRow.errors.join(" | "),
-                });
-            }
-        }
-
-        return res.json({
-            message: "Import completed",
-            data: {
-                classId,
-                className: `${classExists.name}-${classExists.section}`,
-                ...summary,
-                stepTrace,
-            },
-        });
-    } catch (err) {
-        console.log(err);
-        return res.status(500).json({ message: "Failed to import student data" });
-    }
-});
-
-router.post("/bulk-ingest-portal", auth, async (req: AuthRequest, res: Response) => {
+async function handleStudentBatchImport(req: AuthRequest, res: Response) {
     if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
         return res.status(403).json({ message: "Only school administrators can import students" });
     }
     try {
         const classId = Number(req.body.classId);
-        const rows = Array.isArray(req.body.rows) ? (req.body.rows as ImportStudentInput[]) : [];
-
-        if (!Number.isFinite(classId) || classId <= 0) {
+        const rows = Array.isArray(req.body.rows) ? req.body.rows as ImportStudentInput[] : [];
+        if (!Number.isSafeInteger(classId) || classId <= 0) {
             return res.status(400).json({ message: "Valid classId is required" });
         }
-
-        if (!rows.length) {
-            return res.status(400).json({ message: "No rows received for import" });
-        }
-
+        if (!rows.length) return res.status(400).json({ message: "No rows received for import" });
         const classExists = await prisma.class.findUnique({
             where: { id: classId },
             select: { id: true, name: true, section: true },
         });
+        if (!classExists) return res.status(404).json({ message: "Class not found for the provided classId" });
 
-        if (!classExists) {
-            return res.status(404).json({ message: "Class not found for the provided classId" });
-        }
-
-        const normalizedRows = rows.map((row, index) => normalizeImportRow(row, classId, Number(row.rowNumber ?? index + 1)));
         const summary: ImportBatchResult = {
-            createdStudents: 0,
-            createdParents: 0,
-            createdMothers: 0,
-            createdFathers: 0,
-            linkedParents: 0,
-            linkedRelations: 0,
-            reusedParents: 0,
-            skippedRows: 0,
-            failedRows: [],
-            createdStudentIds: [],
+            createdStudents: 0, createdParents: 0, createdMothers: 0, createdFathers: 0,
+            linkedParents: 0, linkedRelations: 0, reusedParents: 0, skippedRows: 0,
+            failedRows: [], createdStudentIds: [],
         };
         const stepTrace: ImportStepTrace[] = [];
-
+        const normalizedRows = rows.map((row, index) =>
+            normalizeImportRow(row, classId, Number(row.rowNumber ?? index + 1)));
         for (const row of normalizedRows) {
-            const rowResult = await importStudentRow(row, classId);
-            summary.createdStudents += rowResult.createdStudents;
-            summary.createdParents += rowResult.createdParents;
-            summary.createdMothers += rowResult.createdMothers;
-            summary.createdFathers += rowResult.createdFathers;
-            summary.linkedParents += rowResult.linkedParents;
-            summary.linkedRelations += rowResult.linkedRelations;
-            summary.reusedParents += rowResult.reusedParents;
-            summary.skippedRows += rowResult.skippedRows;
-            summary.failedRows.push(...rowResult.failedRows);
-            summary.createdStudentIds.push(...rowResult.createdStudentIds);
-
-            for (const failedRow of rowResult.failedRows) {
+            const result = await importStudentRow(row, classId);
+            summary.createdStudents += result.createdStudents;
+            summary.createdParents += result.createdParents;
+            summary.createdMothers += result.createdMothers;
+            summary.createdFathers += result.createdFathers;
+            summary.linkedParents += result.linkedParents;
+            summary.linkedRelations += result.linkedRelations;
+            summary.reusedParents += result.reusedParents;
+            summary.skippedRows += result.skippedRows;
+            summary.failedRows.push(...result.failedRows);
+            summary.createdStudentIds.push(...result.createdStudentIds);
+            for (const failedRow of result.failedRows) {
                 stepTrace.push({
                     rowNumber: failedRow.rowNumber,
                     admissionno: failedRow.admissionno ?? null,
@@ -803,23 +704,19 @@ router.post("/bulk-ingest-portal", auth, async (req: AuthRequest, res: Response)
                 });
             }
         }
-
         void serverCache.clear();
-
         return res.json({
             message: "Import completed",
-            data: {
-                classId,
-                className: `${classExists.name}-${classExists.section}`,
-                ...summary,
-                stepTrace,
-            },
+            data: { classId, className: `${classExists.name}-${classExists.section}`, ...summary, stepTrace },
         });
-    } catch (err: any) {
-        console.error("Bulk ingest portal error:", err);
-        return res.status(500).json({ message: "Failed to import student data", error: err?.message });
+    } catch (err) {
+        console.error("Student batch import failed:", err);
+        return res.status(500).json({ message: "Failed to import student data" });
     }
-});
+}
+
+router.post("/bulk-import-students", auth, handleStudentBatchImport);
+router.post("/bulk-ingest-portal", auth, handleStudentBatchImport);
 
 router.get("/qr-export-list", auth, async (req: AuthRequest, res: Response) => {
     if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
@@ -1032,20 +929,24 @@ router.post("/fee/bulk-ingest-portal", auth, async (req: AuthRequest, res: Respo
                     continue;
                 }
 
-            results.matchedCount++;
             const studentId = matchedStudent.id;
             const receiptStr = item.receiptNo ? String(item.receiptNo).trim() : "";
             const feesProcessed: string[] = [];
+            let rowFeesUpserted = 0;
+            let rowPaymentsRecorded = 0;
 
             try {
                 await prisma.$transaction(async (tx) => {
+                    const paymentCache = new Map<number, Awaited<ReturnType<typeof tx.payment.findMany>>>();
                     const syncPayment = async (feeId: number, amount: number, noteLabel: string, receipt?: string) => {
                     if (!amount || amount <= 0) return;
                     const screenshotNote = receipt ? `${noteLabel} | Receipt: ${receipt}` : noteLabel;
 
-                    const existingPayments = await tx.payment.findMany({
-                        where: { feeId },
-                    });
+                    let existingPayments = paymentCache.get(feeId);
+                    if (!existingPayments) {
+                        existingPayments = await tx.payment.findMany({ where: { feeId } });
+                        paymentCache.set(feeId, existingPayments);
+                    }
 
                     const existingMatch = existingPayments.find(
                         (p) => p.screenshot && p.screenshot.includes(noteLabel)
@@ -1053,13 +954,14 @@ router.post("/fee/bulk-ingest-portal", auth, async (req: AuthRequest, res: Respo
 
                     if (existingMatch) {
                         if (Number(existingMatch.amount) !== amount) {
-                            await tx.payment.update({
+                            const updated = await tx.payment.update({
                                 where: { id: existingMatch.id },
                                 data: { amount, screenshot: screenshotNote },
                             });
+                            existingPayments.splice(existingPayments.indexOf(existingMatch), 1, updated);
                         }
                     } else {
-                        await tx.payment.create({
+                        const created = await tx.payment.create({
                             data: {
                                 feeId,
                                 amount,
@@ -1069,7 +971,8 @@ router.post("/fee/bulk-ingest-portal", auth, async (req: AuthRequest, res: Respo
                                 verifiedAt: new Date(),
                             },
                         });
-                        results.paymentsRecorded++;
+                        existingPayments.push(created);
+                        rowPaymentsRecorded++;
                     }
                 };
 
@@ -1101,7 +1004,7 @@ router.post("/fee/bulk-ingest-portal", auth, async (req: AuthRequest, res: Respo
                             total: finalTuitionTotal,
                         },
                     });
-                    results.feesUpserted++;
+                    rowFeesUpserted++;
                     feesProcessed.push(`TUITION (₹${finalTuitionTotal})`);
 
                     if (t1 > 0) await syncPayment(feeRecord.id, t1, "Tuition Term 1", receiptStr);
@@ -1137,7 +1040,7 @@ router.post("/fee/bulk-ingest-portal", auth, async (req: AuthRequest, res: Respo
                             total: finalTransTotal,
                         },
                     });
-                    results.feesUpserted++;
+                    rowFeesUpserted++;
                     feesProcessed.push(`BUS (₹${finalTransTotal})`);
 
                     const routeNote = place ? `Route: ${place}` : "";
@@ -1172,7 +1075,7 @@ router.post("/fee/bulk-ingest-portal", auth, async (req: AuthRequest, res: Respo
                             total: finalBooksTotal,
                         },
                     });
-                    results.feesUpserted++;
+                    rowFeesUpserted++;
                     feesProcessed.push(`BOOKS_UNIFORM (₹${finalBooksTotal})`);
 
                     if (booksPaid > 0) {
@@ -1209,7 +1112,7 @@ router.post("/fee/bulk-ingest-portal", auth, async (req: AuthRequest, res: Respo
                             total: regPaid,
                         },
                     });
-                    results.feesUpserted++;
+                    rowFeesUpserted++;
                     feesProcessed.push(`REGISTRATION (₹${regPaid})`);
 
                     await syncPayment(feeRecord.id, regPaid, "Admission & Registration Fee", receiptStr);
@@ -1225,6 +1128,9 @@ router.post("/fee/bulk-ingest-portal", auth, async (req: AuthRequest, res: Respo
 
                 }, { maxWait: 10000, timeout: 15000 });
 
+                results.matchedCount++;
+                results.feesUpserted += rowFeesUpserted;
+                results.paymentsRecorded += rowPaymentsRecorded;
                 results.matchedRecords.push({
                     studentId,
                     studentName: matchedStudent.name,
@@ -1734,6 +1640,63 @@ router.put("/update-payment/:id", auth, async(req: AuthRequest, res: Response) =
     }
 })
 
+
+// Deliberately limited to school executives: removing a student also removes their
+// non-financial school records. Recorded payments must be retained and block deletion.
+router.delete("/:id", auth, async (req: AuthRequest, res: Response) => {
+    if (!isExecutiveRole(req.user?.role)) {
+        return res.status(403).json({ message: "Only school executives can delete students" });
+    }
+
+    const studentId = Number(req.params.id);
+    const confirmationName = req.body?.confirmationName;
+    if (!Number.isSafeInteger(studentId) || studentId <= 0 || typeof confirmationName !== "string" || !confirmationName.trim()) {
+        return res.status(400).json({ message: "A valid student ID and confirmation name are required" });
+    }
+
+    try {
+        const result = await prisma.$transaction(async (tx) => {
+            const student = await tx.student.findUnique({
+                where: { id: studentId },
+                select: { id: true, name: true, studentCode: true, classId: true }
+            });
+            if (!student) return { status: "missing" as const };
+            if (student.name.trim() !== confirmationName.trim()) return { status: "mismatch" as const };
+
+            // A paid fee is a financial record, not disposable enrollment data.
+            const payments = await tx.payment.count({ where: { fee: { studentId } } });
+            if (payments > 0) return { status: "has-payments" as const };
+
+            await tx.reportCard.deleteMany({ where: { studentId } });
+            await tx.studentFeedback.deleteMany({ where: { studentId } });
+            await tx.leaveRequest.deleteMany({ where: { studentId } });
+            await tx.parentStudent.deleteMany({ where: { studentId } });
+            await tx.mark.deleteMany({ where: { studentId } });
+            await tx.attendance.deleteMany({ where: { studentId } });
+            await tx.fee.deleteMany({ where: { studentId } });
+            await tx.student.delete({ where: { id: studentId } });
+            return { status: "deleted" as const, student };
+        }, { isolationLevel: "Serializable" });
+
+        if (result.status === "missing") return res.status(404).json({ message: "Student not found" });
+        if (result.status === "mismatch") return res.status(400).json({ message: "Confirmation name does not match this student" });
+        if (result.status === "has-payments") return res.status(409).json({ message: "This student has recorded payments. Their financial history must be retained; deletion is blocked." });
+
+        void serverCache.clear();
+        void logAudit({
+            req,
+            action: "DELETE_STUDENT",
+            tag: "STUDENT",
+            details: `Deleted student ${result.student.name} (${result.student.studentCode || result.student.id}) from class #${result.student.classId}; no payment history existed`,
+            entityType: "Student",
+            entityId: result.student.id,
+        });
+        return res.json({ message: "Student deleted successfully", studentId });
+    } catch (error) {
+        console.error("Error deleting student:", error);
+        return res.status(500).json({ message: "Could not delete this student. No records were changed." });
+    }
+});
 
 router.get("/get-student-details-master/:id", auth, async(req: AuthRequest, res: Response) => {
     try {

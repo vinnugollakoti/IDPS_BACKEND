@@ -10,11 +10,15 @@ if (!connectionString) {
   throw new Error("Neither DATABASE_URL nor DIRECT_URL is defined");
 }
 
-// Optimize pool to prevent holding excessive idle connections open on Supabase
+// Keep the default modest for the 512 MB instance; allow tuning from real
+// pool-wait measurements without shipping another build.
+const configuredPoolMax = Number(process.env.DATABASE_POOL_MAX);
+const poolMax = Number.isSafeInteger(configuredPoolMax) && configuredPoolMax >= 1 && configuredPoolMax <= 10
+  ? configuredPoolMax : 5;
 const pool = new Pool({
   connectionString,
-  max: 3,                  // Minimal pool for 512MB RAM — each conn holds ~5-10MB
-  idleTimeoutMillis: 10000, // Close idle connections after 10s
+  max: poolMax,
+  idleTimeoutMillis: 30000,
   connectionTimeoutMillis: 5000,
   keepAlive: true,
 });

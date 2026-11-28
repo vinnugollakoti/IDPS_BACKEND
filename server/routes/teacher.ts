@@ -1,5 +1,6 @@
 import express, { Request, Response } from "express";
 import prisma from "../prisma/client";
+import { resolveAuthUserId } from "../lib/authIdentity";
 import { AuthRequest, auth, isStaffRole } from "../middleware/auth";
 import { parseTeacherSelfie, uploadTeacherAttendanceSelfie } from "../lib/supabaseStorage";
 
@@ -14,10 +15,6 @@ router.use("/attendance", (_req, res, next) => {
     next();
 });
 
-const resolveAuthUserId = (user: any) => {
-    const value = Number(user?.userId ?? user?.id);
-    return Number.isFinite(value) && value > 0 ? value : null;
-};
 
 const getRequestIp = (req: Request) => {
     const forwardedFor = req.headers["x-forwarded-for"];

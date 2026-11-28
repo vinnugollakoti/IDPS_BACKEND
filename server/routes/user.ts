@@ -2,15 +2,14 @@ import { updateStudentProfile } from "../lib/studentProfileUpdate";
 import { allowedModulesForRole } from "../lib/modulePermissions";
 import express, {Request, Response} from "express";
 import prisma from "../prisma/client";
-import { AuthRequest, auth, isExecutiveRole } from "../middleware/auth";
+import { resolveAuthUserId } from "../lib/authIdentity";
+import { AuthRequest, auth, isExecutiveRole, isSchoolAdministratorRole } from "../middleware/auth";
 import { serverCache } from "../utils/cache";
 import { logAudit } from "../utils/audit";
 const router = express.Router();
+const TEACHER_HONORIFICS = new Set(["Mr.", "Mrs.", "Ms.", "Miss", "Mx.", "Dr.", "Prof."]);
+const validHonorific = (value: unknown) => value === null || value === "" || (typeof value === "string" && TEACHER_HONORIFICS.has(value));
 
-const resolveAuthUserId = (user: any) => {
-    const value = Number(user?.userId ?? user?.id);
-    return Number.isFinite(value) && value > 0 ? value : null;
-};
 
 const resolveParentType = (relation?: string | null) => {
     const value = String(relation ?? "").toUpperCase();
@@ -21,7 +20,7 @@ const resolveParentType = (relation?: string | null) => {
 
 router.post("/create-parent", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
+        if (!isSchoolAdministratorRole(req.user.role)) {
             return res.status(403).json({message : "UnAuthorized request"});
         }
 
@@ -96,11 +95,12 @@ import { uploadUserProfilePhoto } from "../lib/supabaseStorage";
 
 router.post("/create-teacher", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
-            return res.status(400).json({message : "UnAuthorized area"});
+        if (!isSchoolAdministratorRole(req.user.role)) {
+            return res.status(403).json({message : "UnAuthorized area"});
         }
 
-        const {name, email, phone, gender, photo, photoBase64, photoMimeType} = req.body;
+        const {name, email, phone, gender, honorific, photo, photoBase64, photoMimeType} = req.body;
+        if (honorific !== undefined && !validHonorific(honorific)) return res.status(400).json({ message: "Select a valid honorific" });
 
         if (!name || !email || !phone) {
             return res.status(400).json({message : "Missing required fields: name, email, and phone are required"});
@@ -138,6 +138,7 @@ router.post("/create-teacher", auth, async(req: AuthRequest, res: Response) => {
             const user = await tx.user.create({
                 data : {
                     name: name.trim(),
+                    honorific: honorific || null,
                     email: teacherEmail,
                     role: "TEACHER",
                     gender: tGender
@@ -266,7 +267,7 @@ const mapSocialCategory = (value?: string | null) => {
 
 router.post("/create-student", auth, async( req: AuthRequest, res: Response) => {
     try {
-        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
+        if (!isSchoolAdministratorRole(req.user.role)) {
             return res.status(400).json({message: "UnAuthorized area"});
         }
 
@@ -372,6 +373,8 @@ router.put("/me", auth, async (req: AuthRequest, res: Response) => {
     const name = typeof req.body?.name === "string" ? req.body.name.trim() : "";
     const email = typeof req.body?.email === "string" ? req.body.email.trim().toLowerCase() : "";
     const phone = req.body?.phone === undefined ? undefined : typeof req.body.phone === "string" ? req.body.phone.trim() : null;
+    const honorific = req.body?.honorific;
+    const gender = req.body?.gender;
     if (!name || !email) return res.status(400).json({ message: "Name and email are required" });
     if (phone === null || (phone && (!/^\+?[0-9 ()-]+$/.test(phone) || !/^\d{7,15}$/.test(phone.replace(/\D/g, ""))))) {
       return res.status(400).json({ message: "Enter a valid phone number, including the country code if needed." });
@@ -380,6 +383,8 @@ router.put("/me", auth, async (req: AuthRequest, res: Response) => {
       where: { id: userId }, select: { teacher: { select: { id: true } }, parent: { select: { id: true } } },
     });
     if (!current) return res.status(404).json({ message: "User not found" });
+    if (honorific !== undefined && (!current.teacher || !validHonorific(honorific))) return res.status(400).json({ message: "Select a valid teacher honorific" });
+    if (gender !== undefined && (!current.teacher || !["MALE", "FEMALE"].includes(gender))) return res.status(400).json({ message: "Select a valid teacher gender" });
     if (phone === "" && (current.teacher || current.parent)) {
       return res.status(400).json({ message: "A contact phone number is required for this profile." });
     }
@@ -387,8 +392,10 @@ router.put("/me", auth, async (req: AuthRequest, res: Response) => {
       where: { id: userId },
       data: {
         name, email,
+        ...(honorific !== undefined ? { honorific: honorific || null } : {}),
+        ...(gender !== undefined ? { gender } : {}),
         ...(!current.teacher && !current.parent && phone !== undefined ? { phone: phone || null } : {}),
-        ...(current.teacher ? { teacher: { update: { name, phone } } } : {}),
+        ...(current.teacher ? { teacher: { update: { name, phone, ...(gender !== undefined ? { gender } : {}) } } } : {}),
         ...(current.parent ? { parent: { update: { name, phone1: phone } } } : {}),
       },
       omit: { phone: false },
@@ -450,7 +457,7 @@ router.post("/me/photo", auth, async (req: AuthRequest, res: Response) => {
 
 router.put("/update-parent/:id", auth, async(req: AuthRequest, res: Response) => {
     try {
-        if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
+        if (!isSchoolAdministratorRole(req.user.role)) {
             return res.status(403).json({message: "UnAuthorized request"})
         }
 
@@ -499,7 +506,7 @@ router.put("/update-parent/:id", auth, async(req: AuthRequest, res: Response) =>
 router.put("/update-student/:id", auth, updateStudentProfile);
 
 router.put("/assign-teacher-classes/:id", auth, async (req: AuthRequest, res: Response) => {
-    if (!isExecutiveRole(req.user.role) && req.user.role !== "RECEPTIONIST") {
+    if (!isSchoolAdministratorRole(req.user.role)) {
         return res.status(403).json({ message: "You are not allowed to manage teacher class assignments" });
     }
     const teacherId = Number(req.params.id);
@@ -544,14 +551,12 @@ router.put("/assign-teacher-classes/:id", auth, async (req: AuthRequest, res: Re
 
 router.put("/update-teacher/:id", auth, async (req: AuthRequest, res: Response) => {
     try {
-        if (
-            !isExecutiveRole(req.user.role) &&
-            req.user.role !== "RECEPTIONIST"
-        ) {
+        if (!isSchoolAdministratorRole(req.user.role)) {
             return res.status(403).json({ message: "UnAuthorized request" });
         }
 
-        const { name, email, phone, gender, salary, photo, photoBase64, photoMimeType } = req.body;
+        const { name, email, phone, gender, honorific, salary, photo, photoBase64, photoMimeType } = req.body;
+        if (honorific !== undefined && !validHonorific(honorific)) return res.status(400).json({ message: "Select a valid honorific" });
         if (req.user.role === "RECEPTIONIST" && salary !== undefined) {
             return res.status(403).json({ message: "Receptionists cannot change teacher salary or compensation data" });
         }
@@ -592,12 +597,14 @@ router.put("/update-teacher/:id", auth, async (req: AuthRequest, res: Response) 
                 }
             }
 
-            if (email || name) {
+            if (email || name || gender || honorific !== undefined) {
                 await tx.user.update({
                     where: { id: teacher.userId },
                     data: {
                         ...(email && { email }),
-                        ...(name && { name })
+                        ...(name && { name }),
+                        ...(gender && { gender }),
+                        ...(honorific !== undefined ? { honorific: honorific || null } : {})
                     }
                 });
             }

@@ -1,6 +1,8 @@
 import express, { Response } from "express";
 import prisma from "../prisma/client";
 import { AuthRequest, auth, isStaffRole } from "../middleware/auth";
+import { assignedTeacherClassIds as classIdsForTeacher } from "../lib/teacherClassScope";
+import { resolveAuthUserId } from "../lib/authIdentity";
 
 const router = express.Router();
 const dayStart = (value?: string) => {
@@ -13,21 +15,7 @@ const dayStart = (value?: string) => {
 const userId = (user: any) => Number(user?.userId ?? user?.id);
 const assignedTeacherClassIds = async (req: AuthRequest) => {
   if (req.user.role !== "TEACHER") return null;
-  const teacher = await prisma.teacher.findUnique({
-    where: { userId: userId(req.user) },
-    select: { id: true },
-  });
-  if (!teacher) return [];
-  const classes = await prisma.class.findMany({
-    where: {
-      OR: [
-        { teacherId: teacher.id },
-        { teachers: { some: { teacherId: teacher.id } } },
-      ],
-    },
-    select: { id: true },
-  });
-  return classes.map((item) => item.id);
+  return classIdsForTeacher(resolveAuthUserId(req.user) ?? -1);
 };
 
 router.post("/batch-sync", auth, async (req: AuthRequest, res: Response) => {
@@ -65,20 +53,24 @@ router.post("/batch-sync", auth, async (req: AuthRequest, res: Response) => {
     }
     const syncedCodes: string[] = [];
     for (const group of grouped.values()) {
-      const session = await prisma.attendanceSession.upsert({
-        where: { classId_date: { classId: group[0].classId, date: group[0].date } },
-        update: {},
-        create: { classId: group[0].classId, date: group[0].date, takenById: teacher?.id ?? null, createdAt: group[0].date }
-      });
-      
-      for (const entry of group) {
-        await prisma.attendance.upsert({
-          where: { sessionId_studentId: { sessionId: session.id, studentId: entry.studentId } },
-          update: { status: "PRESENT" },
-          create: { sessionId: session.id, studentId: entry.studentId, status: "PRESENT" }
+      await prisma.$transaction(async (tx) => {
+        const session = await tx.attendanceSession.upsert({
+          where: { classId_date: { classId: group[0].classId, date: group[0].date } },
+          update: {},
+          create: { classId: group[0].classId, date: group[0].date, takenById: teacher?.id ?? null, createdAt: group[0].date }
         });
-        syncedCodes.push(entry.code);
-      }
+        const studentIds = group.map(entry => entry.studentId);
+        // New scans insert in one statement; old ABSENT rows still become PRESENT.
+        await tx.attendance.createMany({
+          data: studentIds.map(studentId => ({ sessionId: session.id, studentId, status: "PRESENT" })),
+          skipDuplicates: true,
+        });
+        await tx.attendance.updateMany({
+          where: { sessionId: session.id, studentId: { in: studentIds }, status: "ABSENT" },
+          data: { status: "PRESENT" },
+        });
+      });
+      syncedCodes.push(...group.map(entry => entry.code));
     }
     const synced = syncedCodes.length;
     res.json({ message: "Attendance synced", data: { synced, syncedCodes, rejectedCodes: codes.filter((code) => !syncedCodes.includes(code)) } });

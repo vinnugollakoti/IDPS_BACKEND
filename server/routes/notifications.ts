@@ -1,5 +1,6 @@
 import express, { Response } from "express";
 import prisma from "../prisma/client";
+import { resolveAuthUserId } from "../lib/authIdentity";
 import { AuthRequest, auth, isExecutiveRole } from "../middleware/auth";
 import { logAudit } from "../utils/audit";
 import { uploadNotificationImage } from "../lib/supabaseStorage";
@@ -15,10 +16,6 @@ const getWebPushConfig = () => {
   return { publicKey, configured };
 };
 
-const resolveAuthUserId = (user: any) => {
-  const value = Number(user?.userId ?? user?.id);
-  return Number.isFinite(value) && value > 0 ? value : null;
-};
 
 // ─── Helper: fetch push tokens by audience ────────────────────────────────────
 
@@ -282,20 +279,26 @@ router.post("/send-broadcast", auth, async (req: AuthRequest, res: Response) => 
         imageUrl: cleanImageUrl || null,
         url: "/?noticeId=" + broadcast.id,
       });
-      const results = await Promise.all(webTargets.map(async (target) => {
-        try {
-          await webpush.sendNotification(JSON.parse(target.token) as PushSubscription, webPayload, { TTL: 86400 });
-          return true;
-        } catch (error: any) {
-          webPushFailures += 1;
-          if (error?.statusCode === 404 || error?.statusCode === 410) {
-            await prisma.pushToken.delete({ where: { token: target.token } }).catch(() => undefined);
+      const expiredTokens: string[] = [];
+      for (let start = 0; start < webTargets.length; start += 10) {
+        const results = await Promise.all(webTargets.slice(start, start + 10).map(async (target) => {
+          try {
+            await webpush.sendNotification(JSON.parse(target.token) as PushSubscription, webPayload, { TTL: 86400 });
+            return true;
+          } catch (error: any) {
+            webPushFailures += 1;
+            if (error?.statusCode === 404 || error?.statusCode === 410) expiredTokens.push(target.token);
+            console.warn(`[Web Push] Delivery failed for token ${target.userId}:`, error?.message);
+            return false;
           }
-          console.warn(`[Web Push] Delivery failed for token ${target.userId}:`, error?.message);
-          return false;
-        }
-      }));
-      pushedToWeb = results.filter(Boolean).length;
+        }));
+        pushedToWeb += results.filter(Boolean).length;
+      }
+      if (expiredTokens.length) {
+        await prisma.pushToken.deleteMany({ where: { token: { in: expiredTokens } } }).catch((error) =>
+          console.warn("[Web Push] Expired token cleanup failed:", error)
+        );
+      }
     }
 
     res.json({

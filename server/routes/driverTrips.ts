@@ -1,4 +1,5 @@
 import express, { Response } from "express";
+import { isBusTripStale, staleTripCutoff } from "../lib/busTripFreshness";
 import prisma from "../prisma/client";
 import { AuthRequest, auth } from "../middleware/auth";
 import { isExecutiveRole } from "../middleware/auth";
@@ -86,7 +87,7 @@ router.put("/admin/buses/:busId/assignment", async (req: AuthRequest, res: Respo
     const bus = await prisma.bus.findUnique({ where: { id: busId } });
     if (!bus) return res.status(404).json({ message: "Bus not found" });
     const activeTrip = await prisma.busTrip.findFirst({ where: { busId, status: "ACTIVE" }, select: { id: true, period: true, lastPingAt: true } });
-    if (activeTrip && Date.now() - activeTrip.lastPingAt.getTime() > 90_000) {
+    if (activeTrip && isBusTripStale(activeTrip.lastPingAt)) {
       await prisma.busTrip.updateMany({ where: { id: activeTrip.id, status: "ACTIVE" }, data: { status: "EXPIRED", endedAt: new Date() } });
     } else if (activeTrip) return res.status(409).json({ message: "End the active bus trip before changing its driver" });
     const user = email ? await prisma.user.findUnique({ where: { email }, include: { driver: true } }) : null;
@@ -102,7 +103,7 @@ router.get("/assignment", async (req: AuthRequest, res: Response) => {
     const bus = await assignedBus(req);
     if (!bus) return res.status(404).json({ message: "No bus is assigned to this driver account" });
     let activeTrip = await prisma.busTrip.findFirst({ where: { busId: bus.id, status: "ACTIVE" }, orderBy: { startedAt: "desc" } });
-    if (activeTrip && Date.now() - activeTrip.lastPingAt.getTime() > 90_000) {
+    if (activeTrip && isBusTripStale(activeTrip.lastPingAt)) {
       await prisma.busTrip.updateMany({ where: { id: activeTrip.id, status: "ACTIVE" }, data: { status: "EXPIRED", endedAt: new Date() } });
       activeTrip = null;
     }
@@ -116,7 +117,7 @@ router.post("/trips/start", async (req: AuthRequest, res: Response) => {
     if (!bus) return res.status(403).json({ message: "This driver account has no assigned bus" });
     const period = req.body?.period;
     if (!["MORNING", "EVENING"].includes(period) || !validPoint(req.body)) return res.status(400).json({ message: "Select a trip period and provide a valid starting location" });
-    await prisma.busTrip.updateMany({ where: { busId: bus.id, status: "ACTIVE", OR: [{ lastPingAt: { lt: new Date(Date.now() - 90_000) } }, { period: "MORNING", startedAt: { lt: new Date(Date.now() - 6 * 60 * 60 * 1000) } }, { period: "EVENING", startedAt: { lt: new Date(Date.now() - 8 * 60 * 60 * 1000) } }] }, data: { status: "EXPIRED", endedAt: new Date() } });
+    await prisma.busTrip.updateMany({ where: { busId: bus.id, status: "ACTIVE", OR: [{ lastPingAt: { lt: staleTripCutoff() } }, { period: "MORNING", startedAt: { lt: new Date(Date.now() - 6 * 60 * 60 * 1000) } }, { period: "EVENING", startedAt: { lt: new Date(Date.now() - 8 * 60 * 60 * 1000) } }] }, data: { status: "EXPIRED", endedAt: new Date() } });
     if (await prisma.busTrip.findFirst({ where: { busId: bus.id, status: "ACTIVE" } })) return res.status(409).json({ message: "This bus already has an active trip" });
     const trip = await prisma.busTrip.create({ data: { busId: bus.id, driverUserId: userId(req), period, status: "ACTIVE", latitude: req.body.latitude, longitude: req.body.longitude, ...gpsMetadata(req.body) } });
     const parents = await prisma.parentStudent.findMany({ where: { student: { busId: bus.id } }, include: { parent: { select: { userId: true } } } });

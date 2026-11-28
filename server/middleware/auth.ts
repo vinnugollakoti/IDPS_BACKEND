@@ -52,3 +52,7 @@ export function isStaffRole(role?: string): boolean {
   const r = role.trim().toUpperCase();
   return isExecutiveRole(r) || r === "RECEPTIONIST" || r === "TEACHER";
 }
+
+export function isSchoolAdministratorRole(role?: string): boolean {
+  return isExecutiveRole(role) || role?.trim().toUpperCase() === "RECEPTIONIST";
+}
