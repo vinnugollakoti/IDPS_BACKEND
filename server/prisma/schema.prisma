@@ -41,6 +41,7 @@ model ParentStudent {
   student Student @relation(fields: [studentId], references: [id])
 
   @@id([parentId, studentId])
+  @@index([studentId])
 }
 
 model Student {
@@ -79,6 +80,7 @@ model Student {
   complaints Complaint[]
 
   @@index([classId])
+  @@index([busId])
 }
 
 model Class {
@@ -101,6 +103,7 @@ model Class {
   classSubject       ClassSubject[]
 
   @@unique([name, section])
+  @@index([teacherId])
 }
 
 model Teacher {
@@ -193,6 +196,7 @@ model User {
   otpRateLimits OtpRateLimit[]
   id        Int       @id @default(autoincrement())
   name      String
+  honorific String?
   email     String    @unique
   role      Role
   gender    Gender
@@ -269,6 +273,7 @@ model LeaveRequest {
   @@index([studentId, startDate])
   @@index([parentId, createdAt])
   @@index([assignedTeacherId, status])
+  @@index([status, createdAt])
 }
 
 enum ComplaintMode {
@@ -306,7 +311,6 @@ model UserPermission {
   updatedAt DateTime @updatedAt
 
   @@unique([userId, module])
-  @@index([userId])
 }
 
 model PushToken {
@@ -381,7 +385,6 @@ model AttendanceSession {
   attendances Attendance[]
 
   @@unique([classId, date]) // one session per class per day
-  @@index([classId])
   @@index([takenById])
 }
 
@@ -420,6 +423,7 @@ model ClassSubject {
   subject   Subject @relation(fields: [subjectId], references: [id])
 
   @@unique([classId, subjectId], name: "classId_subjectId")
+  @@index([subjectId])
 }
 
 model Exam {
@@ -455,7 +459,6 @@ model Mark {
 
   @@unique([examId, studentId])
   @@index([studentId])
-  @@index([examId])
 }
 
 model TimeTable {
@@ -520,8 +523,8 @@ model Fee {
   createdAt DateTime @default(now())
   updatedAt DateTime @updatedAt
 
-  @@index([studentId])
   @@index([type])
+  @@index([createdAt])
   @@unique([studentId, type, academicYear])
 }
 
@@ -783,6 +786,7 @@ model ReportCard {
   exam Exam @relation(fields: [examId], references: [id], onDelete: Cascade)
   student Student @relation(fields: [studentId], references: [id], onDelete: Cascade)
   @@id([examId, studentId])
+  @@index([studentId])
 }
 
 model BillDeskWebhookEvent {

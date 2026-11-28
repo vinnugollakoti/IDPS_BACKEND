@@ -138,220 +138,79 @@ const parseBase64Document = (value: unknown, mimeHint: unknown): ParsedDocument 
   if (!extension) throw new Error("Homework attachments must be JPG, PNG, WebP, or PDF files");
   if (!/^[A-Za-z0-9+/]+=*$/.test(payload)) throw new Error("Homework attachment contains invalid data");
   const buffer = Buffer.from(payload, "base64");
-  if (!buffer.length || buffer.length > HOMEWORK_FILE_MAX_BYTES) throw new Error("Each homework attachment must be 15 MB or smaller");
+  if (!buffer.length || buffer.length > HOMEWORK_FILE_MAX_BYTES) throw new Error("Each homework attachment must be 5 MB or smaller");
   return { buffer, mimeType, extension, sizeBytes: buffer.length };
 };
 
-export const uploadHomeworkFile = async ({ imageBase64, imageMimeType, path }: UploadImageInput) => {
+type StorageBucket = "SUPABASE_HOMEWORK_BUCKET" | "SUPABASE_TEACHER_ATTENDANCE_BUCKET" |
+  "SUPABASE_NOTIFICATION_BUCKET" | "SUPABASE_EXPENSE_BILL_BUCKET" | "SUPABASE_USER_PROFILES_BUCKET";
+
+const uploadParsedFile = async (
+  parsed: ParsedDocument,
+  path: string,
+  bucketVariable: StorageBucket,
+  fallbackBucket: string,
+  upsert = false,
+) => {
   const url = process.env.SUPABASE_URL?.replace(/\/+$/, "");
   const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const bucket = process.env.SUPABASE_HOMEWORK_BUCKET ?? "homework";
+  const bucket = process.env[bucketVariable] || fallbackBucket;
   if (!url || !serviceRoleKey) throw new Error("Supabase storage is not configured");
-  const parsed = parseBase64Document(imageBase64, imageMimeType);
   const objectPath = `${path}.${parsed.extension}`;
   const response = await fetch(`${url}/storage/v1/object/${bucket}/${objectPath}`, {
     method: "POST",
-    headers: { Authorization: `Bearer ${serviceRoleKey}`, apikey: serviceRoleKey, "Content-Type": parsed.mimeType, "Cache-Control": "31536000", "x-upsert": "false" },
+    headers: {
+      Authorization: `Bearer ${serviceRoleKey}`,
+      apikey: serviceRoleKey,
+      "Content-Type": parsed.mimeType,
+      "Cache-Control": "31536000",
+      "x-upsert": String(upsert),
+    },
     body: parsed.buffer as unknown as BodyInit,
   });
-  if (!response.ok) throw new Error(`Failed to upload homework attachment: ${await response.text().catch(() => response.statusText)}`);
-  return { name: objectPath.split("/").pop() || objectPath, url: `${url}/storage/v1/object/public/${bucket}/${objectPath}`, path: objectPath, mimeType: parsed.mimeType, sizeBytes: parsed.sizeBytes };
+  if (!response.ok) {
+    const detail = await response.text().catch(() => "");
+    throw new Error(`Supabase upload failed (HTTP ${response.status})${detail ? `: ${detail}` : ""}`);
+  }
+  return {
+    objectPath,
+    publicUrl: `${url}/storage/v1/object/public/${bucket}/${objectPath}`,
+  };
 };
 
-// ─── Legacy alias (used by teacher attendance) ─────────────────────────────────
+export const uploadHomeworkFile = async ({ imageBase64, imageMimeType, path }: UploadImageInput) => {
+  const parsed = parseBase64Document(imageBase64, imageMimeType);
+  const uploaded = await uploadParsedFile(parsed, path, "SUPABASE_HOMEWORK_BUCKET", "homework");
+  return { name: uploaded.objectPath.split("/").pop() || uploaded.objectPath, url: uploaded.publicUrl,
+    path: uploaded.objectPath, mimeType: parsed.mimeType, sizeBytes: parsed.sizeBytes };
+};
 
 export const parseTeacherSelfie = (imageBase64?: unknown, imageMimeType?: unknown): ParsedImage =>
   parseBase64Image(imageBase64, imageMimeType, TEACHER_SELFIE_MAX_BYTES, "TeacherSelfie");
 
-// ─── Teacher Attendance Upload ────────────────────────────────────────────────
-
-const getTeacherBucketConfig = () => {
-  const url = process.env.SUPABASE_URL?.replace(/\/+$/, "");
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const bucket = process.env.SUPABASE_TEACHER_ATTENDANCE_BUCKET ?? "teacher-attendance";
-
-  if (!url || !serviceRoleKey) throw new Error("Supabase storage is not configured");
-  return { url, serviceRoleKey, bucket };
-};
-
-export const uploadTeacherAttendanceSelfie = async ({
-  imageBase64,
-  imageMimeType,
-  path,
-}: UploadImageInput) => {
-  const config = getTeacherBucketConfig();
+export const uploadTeacherAttendanceSelfie = async ({ imageBase64, imageMimeType, path }: UploadImageInput) => {
   const parsed = parseTeacherSelfie(imageBase64, imageMimeType);
-  const objectPath = `${path}.${parsed.extension}`;
-  const uploadUrl = `${config.url}/storage/v1/object/${config.bucket}/${objectPath}`;
-
-  const response = await fetch(uploadUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${config.serviceRoleKey}`,
-      apikey: config.serviceRoleKey,
-      "Content-Type": parsed.mimeType,
-      "Cache-Control": "31536000",
-      "x-upsert": "false",
-    },
-    body: parsed.buffer as unknown as BodyInit,
-  });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`Failed to upload selfie to Supabase${detail ? `: ${detail}` : ""}`);
-  }
-
-  return {
-    selfiePath: objectPath,
-    selfieUrl: `${config.url}/storage/v1/object/public/${config.bucket}/${objectPath}`,
-    selfieMimeType: parsed.mimeType,
-    selfieSizeBytes: parsed.sizeBytes,
-  };
+  const uploaded = await uploadParsedFile(parsed, path, "SUPABASE_TEACHER_ATTENDANCE_BUCKET", "teacher-attendance");
+  return { selfiePath: uploaded.objectPath, selfieUrl: uploaded.publicUrl,
+    selfieMimeType: parsed.mimeType, selfieSizeBytes: parsed.sizeBytes };
 };
 
-// ─── Notification Image Upload ────────────────────────────────────────────────
-
-export const uploadNotificationImage = async ({
-  imageBase64,
-  imageMimeType,
-  path,
-}: UploadImageInput) => {
-  const url = process.env.SUPABASE_URL?.replace(/\/+$/, "");
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const bucket = process.env.SUPABASE_NOTIFICATION_BUCKET ?? "notification-images";
-
-  console.log(`[Supabase] uploadNotificationImage → bucket: "${bucket}"`);
-
-  if (!url || !serviceRoleKey) {
-    console.error("[Supabase] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env");
-    throw new Error("Supabase storage is not configured");
-  }
-
-  let parsed: ParsedImage;
-  try {
-    parsed = parseBase64Image(imageBase64, imageMimeType, NOTIFICATION_IMAGE_MAX_BYTES, "NotificationImage");
-  } catch (err: any) {
-    console.error("[Supabase] Image parse error:", err?.message);
-    throw err;
-  }
-
-  const objectPath = `${path}.${parsed.extension}`;
-  const uploadUrl = `${url}/storage/v1/object/${bucket}/${objectPath}`;
-
-  console.log(
-    `[Supabase] Uploading ${(parsed.sizeBytes / 1024).toFixed(1)} KB (${parsed.mimeType}) → ${uploadUrl}`
-  );
-
-  const response = await fetch(uploadUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${serviceRoleKey}`,
-      apikey: serviceRoleKey,
-      "Content-Type": parsed.mimeType,
-      "Cache-Control": "31536000",
-      "x-upsert": "true",
-    },
-    body: parsed.buffer as unknown as BodyInit,
-  });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    console.error(`[Supabase] Upload failed (HTTP ${response.status}):`, detail);
-    throw new Error(
-      `Supabase upload error (HTTP ${response.status}): ${detail || response.statusText}`
-    );
-  }
-
-  const publicUrl = `${url}/storage/v1/object/public/${bucket}/${objectPath}`;
-  console.log(`[Supabase] Upload success → ${publicUrl}`);
-
-  return {
-    imagePath: objectPath,
-    imageUrl: publicUrl,
-    imageMimeType: parsed.mimeType,
-    imageSizeBytes: parsed.sizeBytes,
-  };
+export const uploadNotificationImage = async ({ imageBase64, imageMimeType, path }: UploadImageInput) => {
+  const parsed = parseBase64Image(imageBase64, imageMimeType, NOTIFICATION_IMAGE_MAX_BYTES, "NotificationImage");
+  const uploaded = await uploadParsedFile(parsed, path, "SUPABASE_NOTIFICATION_BUCKET", "notification-images", true);
+  return { imagePath: uploaded.objectPath, imageUrl: uploaded.publicUrl,
+    imageMimeType: parsed.mimeType, imageSizeBytes: parsed.sizeBytes };
 };
 
 export const uploadExpenseBill = async ({ imageBase64, imageMimeType, path }: UploadImageInput) => {
-  const url = process.env.SUPABASE_URL?.replace(/\/+$/, "");
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const bucket = process.env.SUPABASE_EXPENSE_BILL_BUCKET ?? "expense-bills";
-  if (!url || !serviceRoleKey) throw new Error("Supabase storage is not configured");
   const parsed = parseBase64Image(imageBase64, imageMimeType, 15 * 1024 * 1024, "ExpenseBill");
-  const objectPath = `${path}.${parsed.extension}`;
-  const response = await fetch(`${url}/storage/v1/object/${bucket}/${objectPath}`, {
-    method: "POST",
-    headers: { Authorization: `Bearer ${serviceRoleKey}`, apikey: serviceRoleKey, "Content-Type": parsed.mimeType, "Cache-Control": "31536000", "x-upsert": "false" },
-    body: parsed.buffer as unknown as BodyInit,
-  });
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    throw new Error(`Failed to upload expense bill to Supabase${detail ? `: ${detail}` : ""}`);
-  }
-  return { billPath: objectPath, billUrl: `${url}/storage/v1/object/public/${bucket}/${objectPath}`, billMimeType: parsed.mimeType };
+  const uploaded = await uploadParsedFile(parsed, path, "SUPABASE_EXPENSE_BILL_BUCKET", "expense-bills");
+  return { billPath: uploaded.objectPath, billUrl: uploaded.publicUrl, billMimeType: parsed.mimeType };
 };
 
-// ─── User Profile Photo Upload (user-profiles bucket) ─────────────────────────
-
-export const uploadUserProfilePhoto = async ({
-  imageBase64,
-  imageMimeType,
-  path,
-}: UploadImageInput) => {
-  const url = process.env.SUPABASE_URL?.replace(/\/+$/, "");
-  const serviceRoleKey = process.env.SUPABASE_SERVICE_ROLE_KEY;
-  const bucket = process.env.SUPABASE_USER_PROFILES_BUCKET ?? "user-profiles";
-
-  console.log(`[Supabase] uploadUserProfilePhoto → bucket: "${bucket}"`);
-
-  if (!url || !serviceRoleKey) {
-    console.error("[Supabase] Missing SUPABASE_URL or SUPABASE_SERVICE_ROLE_KEY in .env");
-    throw new Error("Supabase storage is not configured");
-  }
-
-  let parsed: ParsedImage;
-  try {
-    parsed = parseBase64Image(imageBase64, imageMimeType, NOTIFICATION_IMAGE_MAX_BYTES, "ProfilePhoto");
-  } catch (err: any) {
-    console.error("[Supabase] Profile photo parse error:", err?.message);
-    throw err;
-  }
-
-  const objectPath = `${path}.${parsed.extension}`;
-  const uploadUrl = `${url}/storage/v1/object/${bucket}/${objectPath}`;
-
-  console.log(
-    `[Supabase] Uploading profile photo ${(parsed.sizeBytes / 1024).toFixed(1)} KB (${parsed.mimeType}) → ${uploadUrl}`
-  );
-
-  const response = await fetch(uploadUrl, {
-    method: "POST",
-    headers: {
-      Authorization: `Bearer ${serviceRoleKey}`,
-      apikey: serviceRoleKey,
-      "Content-Type": parsed.mimeType,
-      "Cache-Control": "31536000",
-      "x-upsert": "true",
-    },
-    body: parsed.buffer as unknown as BodyInit,
-  });
-
-  if (!response.ok) {
-    const detail = await response.text().catch(() => "");
-    console.error(`[Supabase] Profile photo upload failed (HTTP ${response.status}):`, detail);
-    throw new Error(
-      `Supabase profile photo upload error (HTTP ${response.status}): ${detail || response.statusText}`
-    );
-  }
-
-  const publicUrl = `${url}/storage/v1/object/public/${bucket}/${objectPath}`;
-  console.log(`[Supabase] Profile photo upload success → ${publicUrl}`);
-
-  return {
-    imagePath: objectPath,
-    imageUrl: publicUrl,
-    imageMimeType: parsed.mimeType,
-    imageSizeBytes: parsed.sizeBytes,
-  };
+export const uploadUserProfilePhoto = async ({ imageBase64, imageMimeType, path }: UploadImageInput) => {
+  const parsed = parseBase64Image(imageBase64, imageMimeType, NOTIFICATION_IMAGE_MAX_BYTES, "ProfilePhoto");
+  const uploaded = await uploadParsedFile(parsed, path, "SUPABASE_USER_PROFILES_BUCKET", "user-profiles", true);
+  return { imagePath: uploaded.objectPath, imageUrl: uploaded.publicUrl,
+    imageMimeType: parsed.mimeType, imageSizeBytes: parsed.sizeBytes };
 };

@@ -1,25 +1,12 @@
 import express, {Request, Response} from "express";
 import prisma from "../prisma/client";
+import { canManageClass } from "../lib/teacherClassScope";
 import { AuthRequest, auth, isExecutiveRole, isStaffRole } from "../middleware/auth";
 import { logAudit } from "../utils/audit";
 import { serverCache } from "../utils/cache";
 const router = express.Router();
 
-const resolveAuthUserId = (user: any) => {
-    const value = Number(user?.userId ?? user?.id);
-    return Number.isFinite(value) && value > 0 ? value : null;
-};
 
-
-async function canManageClass(user: any, classId: number) {
-    if (!Number.isSafeInteger(classId) || classId < 1) return false;
-    if (isExecutiveRole(user.role) || user.role === "RECEPTIONIST") return true;
-    const userId = resolveAuthUserId(user);
-    if (user.role !== "TEACHER" || !userId) return false;
-    return Boolean(await prisma.class.findFirst({where:{id:classId, OR:[
-        {teacher:{userId}}, {teachers:{some:{teacher:{userId}}}}
-    ]}, select:{id:true}}));
-}
 
 router.post("/create-class", auth, async(req: AuthRequest, res: Response) => {
     try {

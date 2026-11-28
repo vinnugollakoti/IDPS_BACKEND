@@ -8,6 +8,9 @@ export class MailDeliveryError extends Error {
 }
 
 async function sendMail(to: string, subject: string, html: string) {
+  const configuredTimeout = Number(process.env.MAIL_RELAY_TIMEOUT_MS);
+  const relayTimeoutMs = Number.isSafeInteger(configuredTimeout) && configuredTimeout >= 5_000 && configuredTimeout <= 35_000
+    ? configuredTimeout : 12_000;
   const MAIL_API = process.env.MAIL_API?.trim();
   const MAIL_ID = process.env.MAIL_ID?.trim();
   const { MAIL_PASSWORD } = process.env;
@@ -23,7 +26,7 @@ async function sendMail(to: string, subject: string, html: string) {
     response = await fetch(relay.href, {
       redirect: "manual",
       method: "POST",
-      signal: AbortSignal.timeout(35_000),
+      signal: AbortSignal.timeout(relayTimeoutMs),
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({
         to, subject, html,

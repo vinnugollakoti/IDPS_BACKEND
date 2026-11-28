@@ -1,5 +1,6 @@
 import express, {Request, Response} from "express";
-import { createHmac, scryptSync, timingSafeEqual } from "node:crypto";
+import { createHmac, scrypt, timingSafeEqual } from "node:crypto";
+import { promisify } from "node:util";
 import { randomInt } from "node:crypto";
 import prisma from "../prisma/client";
 import { AuthRequest, auth } from "../middleware/auth";
@@ -43,12 +44,13 @@ async function consumeOtp(id: number, digest: string) {
     return consumed.count === 1;
 }
 
-const verifyReviewerPassword = (password: string, stored: string) => {
+const scryptAsync = promisify(scrypt);
+const verifyReviewerPassword = async (password: string, stored: string) => {
     const [salt, encoded] = stored.split(":");
-    if (!salt || !encoded) return false;
+    if (!salt || !/^[a-f0-9]{128}$/.test(encoded || "")) return false;
     const expected = Buffer.from(encoded, "hex");
-    const actual = scryptSync(password, salt, expected.length);
-    return expected.length === actual.length && timingSafeEqual(expected, actual);
+    const actual = (await scryptAsync(password, salt, expected.length)) as Buffer;
+    return timingSafeEqual(expected, actual);
 };
 
 // Dedicated reusable Play reviewer login. Credentials stay on the server and
@@ -60,7 +62,7 @@ router.post("/play-review-login", authRateLimit({ action: "review-login", window
         const password = typeof req.body?.password === "string" ? req.body.password : "";
         const configuredEmail = process.env.PLAY_REVIEW_EMAIL?.trim().toLowerCase();
         const configuredHash = process.env.PLAY_REVIEW_PASSWORD_HASH;
-        if (!configuredEmail || !configuredHash || email !== configuredEmail || !verifyReviewerPassword(password, configuredHash)) {
+        if (!configuredEmail || !configuredHash || email !== configuredEmail || !await verifyReviewerPassword(password, configuredHash)) {
             return res.status(401).json({ message: "Invalid review credentials" });
         }
         const user = await prisma.user.findUnique({ where: { email: configuredEmail }, include: { teacher: true, parent: true, userPermissions: { select: { module: true, isAllowed: true } } } });
@@ -137,7 +139,7 @@ router.post("/parent/email-otp/verify", authRateLimit({ action: "parent-email-ot
     try {
         if (email === parentReviewEmail) {
             const hash = process.env.PARENT_PLAY_REVIEW_CODE_HASH || "";
-            if (!/^[a-f0-9]{32}:[a-f0-9]{128}$/.test(hash) || !verifyReviewerPassword(otp, hash)) {
+            if (!/^[a-f0-9]{32}:[a-f0-9]{128}$/.test(hash) || !await verifyReviewerPassword(otp, hash)) {
                 return res.status(400).json({ message: "The sign-in code is invalid or expired" });
             }
             const reviewer = await prisma.user.findFirst({

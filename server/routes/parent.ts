@@ -1,4 +1,5 @@
 import { storedReportCards } from "../utils/storedReportCards";
+import { isBusTripStale } from "../lib/busTripFreshness";
 import { reportCardDocument } from "../utils/reportCardDocument";
 import express, { Response } from "express";
 import prisma from "../prisma/client";
@@ -224,7 +225,7 @@ router.get("/transport/:studentId/live", async (req: AuthRequest, res: Response)
     if (!busId) return res.json({ active: false, reason: "NO_BUS" });
     let trip = await prisma.busTrip.findFirst({ where: { busId, status: "ACTIVE" }, orderBy: { startedAt: "desc" } });
     if (!trip) return res.json({ active: false, reason: "NO_ACTIVE_TRIP" });
-    if (Date.now() - trip.lastPingAt.getTime() > 90_000) {
+    if (isBusTripStale(trip.lastPingAt)) {
       await prisma.busTrip.updateMany({ where: { id: trip.id, status: "ACTIVE" }, data: { status: "EXPIRED", endedAt: new Date() } });
       return res.json({ active: false, reason: "LOCATION_STALE" });
     }

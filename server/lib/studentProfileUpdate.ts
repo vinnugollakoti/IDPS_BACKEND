@@ -4,10 +4,8 @@ import type { AuthRequest } from '../middleware/auth';
 import { isExecutiveRole } from '../middleware/auth';
 import db from '../prisma/client';
 import { serverCache } from '../utils/cache';
+import { assignedClasses } from './teacherClassScope';
 
-export const assignedClasses = (userId: number): Prisma.ClassWhereInput => ({
-  OR: [{ teacher: { userId } }, { teachers: { some: { teacher: { userId } } } }],
-});
 class Problem extends Error { constructor(readonly status: number, message: string) { super(message); } }
 const bad = (message: string): never => { throw new Problem(400, message); };
 function stringField(raw: unknown, label: string, max: number, required = false) {
